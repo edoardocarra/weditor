@@ -1,3 +1,0 @@
-C:/editor/build/release/CMakeFiles/edit_cache.dir
-C:/editor/build/release/CMakeFiles/Editor.dir
-C:/editor/build/release/CMakeFiles/rebuild_cache.dir
