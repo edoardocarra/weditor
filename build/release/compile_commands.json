@@ -1,0 +1,7 @@
+[
+{
+  "directory": "C:/editor/build/release",
+  "command": "C:\\mingw64\\bin\\c++.exe  -DVK_USE_PLATFORM_WIN32_KHR -I../../external -I../../external/glm -I../../external/glfw/include -I../../Vulkan::Vulkan -isystem C:/VulkanSDK/1.1.108.0/Include  -O3 -DNDEBUG   -std=gnu++1z -o CMakeFiles\\Editor.dir\\source\\editor.cpp.obj -c C:\\editor\\source\\editor.cpp",
+  "file": "C:/editor/source/editor.cpp"
+}
+]
