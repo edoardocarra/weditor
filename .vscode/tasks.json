@@ -1,0 +1,27 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "build editor",
+            "type": "shell",
+            "command": "g++",
+            "args": [
+                "-std=c++11",
+                "./src/editor.cpp",
+                "-o Editor.exe",
+                "-Iinclude",
+                "-Llib",
+                "-lmingw32",
+                "-lglfw3",
+                "-lopengl32",
+                "-lgdi32",
+                "-luser32",
+                "-lvulkan-1"
+            ],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            }
+        }
+    ]
+}
