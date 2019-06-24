@@ -1,16 +1,14 @@
 {
-    // See https://go.microsoft.com/fwlink/?LinkId=733558
-    // for the documentation about the tasks.json format
     "version": "2.0.0",
     "tasks": [
         {
-            "label": "echo",
+            "label": "build editor",
             "type": "shell",
             "command": "g++",
             "args": [
                 "-std=c++11",
                 "./src/editor.cpp",
-                "-o","Editor.exe",
+                "-o Editor.exe",
                 "-Iinclude",
                 "-Llib",
                 "-lmingw32",

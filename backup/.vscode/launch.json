@@ -1,0 +1,15 @@
+{
+    "name": "C++ Launch",
+    "type": "cppdbg",
+    "request": "launch",
+    "program": "${workspaceRoot}/Editor.exe",
+    "stopAtEntry": false,
+    "customLaunchSetupCommands": [
+       { "text": "target-run", "description": "run target", "ignoreFailures": false }
+    ],
+    "launchCompleteCommand": "exec-run",
+    "windows": {
+       "MIMode": "gdb",
+       "miDebuggerPath": "C:\\MinGw\\bin\\gdb.exe"
+    }
+ }

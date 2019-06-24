@@ -2,18 +2,18 @@
     "configurations": [
         {
             "name": "Win32",
-            "includePath": ["C:/editor/include"],
+            "includePath": [
+                "${workspaceFolder}/**"
+            ],
             "defines": [
                 "_DEBUG",
-                "UNICODE"
+                "UNICODE",
+                "_UNICODE"
             ],
-            "compilerPath": "C:/MinGW/bin/g++.exe",
-            "intelliSenseMode": "gcc-x64",
-            "browse": {
-                "path": ["C:/editor/include"],
-                "limitSymbolsToIncludedHeaders": true,
-                "databaseFilename": ""
-            }
+            "compilerPath": "C:\\ProgramData\\chocolatey\\lib\\mingw\\tools\\install\\mingw64\\bin\\gcc.exe",
+            "cStandard": "c11",
+            "cppStandard": "c++17",
+            "intelliSenseMode": "clang-x64"
         }
     ],
     "version": 4

@@ -5,6 +5,8 @@
 #define GLM_FORCE_RADIANS
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
 
+#define WIDTH 800
+#define HEIGHT 600
 
 #include "GLM/vec4.hpp"
 #include "GLM/mat4x4.hpp"
@@ -14,7 +16,18 @@
 #include <stdexcept>
 #include <functional>
 #include <cstdlib>
+#include <vector>
+#include <cstring>
 
+const std::vector<const char*> validationLayers = {
+    "VK_LAYER_KHRONOS_validation"
+};
+
+#ifdef NDEBUG
+    const bool enableValidationLayers = false;
+#else
+    const bool enableValidationLayers = true;
+#endif
 
 class Viewer {
     public:
@@ -28,7 +41,35 @@ class Viewer {
         GLFWwindow* window;
         //The instance is the connection between your application and the Vulkan library
         VkInstance instance;
+        //checks if all of the requested layers are available
+        bool checkValidationLayerSupport() {
+            uint32_t layerCount;
+            vkEnumerateInstanceLayerProperties(&layerCount, nullptr);
+
+            std::vector<VkLayerProperties> availableLayers(layerCount);
+            vkEnumerateInstanceLayerProperties(&layerCount, availableLayers.data());
+
+           for (const char* layerName : validationLayers) {
+               bool layerFound = false;
+               for (const auto& layerProperties : availableLayers) {
+                   if (strcmp(layerName, layerProperties.layerName) == 0) {
+                       layerFound = true;
+                       break;
+                    }
+                }
+                if (!layerFound) {
+                    return false;
+                }
+            }
+
+            return true;
+        }
         void createInstance() {
+
+            if (enableValidationLayers && !checkValidationLayerSupport()) {
+                throw std::runtime_error("validation layers requested, but not available!");
+            }
+
             //information to the driver to optimize for our specific application
             VkApplicationInfo info = {};
             info.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
@@ -44,6 +85,13 @@ class Viewer {
             VkInstanceCreateInfo createInfo = {};
             createInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
             createInfo.pApplicationInfo = &info;
+
+            if (enableValidationLayers) {
+                createInfo.enabledLayerCount = static_cast<uint32_t>(validationLayers.size());
+                createInfo.ppEnabledLayerNames = validationLayers.data();
+            } else {
+                createInfo.enabledLayerCount = 0;
+            }
 
             //Vulkan is a platform agnostic API, which means that you need an 
             //extension to interface with the window system. GLFW gives you tge require
@@ -69,7 +117,7 @@ class Viewer {
             glfwInit();
             glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
             glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
-            window = glfwCreateWindow(800,600,"Vulkan Viewer",nullptr, nullptr);
+            window = glfwCreateWindow(WIDTH,HEIGHT,"Vulkan Viewer",nullptr, nullptr);
         }
         void initVulkan() {
             createInstance();
