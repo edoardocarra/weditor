@@ -6,7 +6,7 @@
             "type": "shell",
             "command": "g++",
             "args": [
-                "-std=c++11",
+                "-std=c++17",
                 "./src/editor.cpp",
                 "-o Editor.exe",
                 "-Iinclude",
