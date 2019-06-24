@@ -41,6 +41,39 @@ class Viewer {
         GLFWwindow* window;
         //The instance is the connection between your application and the Vulkan library
         VkInstance instance;
+        VkDebugUtilsMessengerEXT debugMessenger; //tell Vulkan about the callback function
+
+        //To relay the debug messages back to our program we need to setup a 
+        //debug messenger with a callback
+
+        // debug callback function.  The VKAPI_ATTR and VKAPI_CALL ensure that 
+        // the function has the right signature for Vulkan to call it.
+        static VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(
+            VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
+            VkDebugUtilsMessageTypeFlagsEXT messageType,
+            const VkDebugUtilsMessengerCallbackDataEXT* pCallbackData,
+            void* pUserData) {
+
+            std::cerr << "validation layer: " << pCallbackData->pMessage << std::endl;
+
+            return VK_FALSE;
+        }
+        // function that will return the required list of extensions based 
+        //on whether validation layers are enabled or not
+        std::vector<const char*> getRequiredExtensions() {
+            uint32_t glfwExtensionCount = 0;
+            const char** glfwExtensions;
+            glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
+
+            std::vector<const char*> extensions(glfwExtensions, glfwExtensions + glfwExtensionCount);
+
+            if (enableValidationLayers) {
+                extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+            }
+
+            return extensions;
+        }
+
         //checks if all of the requested layers are available
         bool checkValidationLayerSupport() {
             uint32_t layerCount;
@@ -87,8 +120,9 @@ class Viewer {
             createInfo.pApplicationInfo = &info;
 
             if (enableValidationLayers) {
-                createInfo.enabledLayerCount = static_cast<uint32_t>(validationLayers.size());
-                createInfo.ppEnabledLayerNames = validationLayers.data();
+                auto extensions = getRequiredExtensions();
+                createInfo.enabledLayerCount = static_cast<uint32_t>(extensions.size());
+                createInfo.ppEnabledLayerNames = extensions.data();
             } else {
                 createInfo.enabledLayerCount = 0;
             }
@@ -113,6 +147,33 @@ class Viewer {
             }
 
         }
+        VkResult CreateDebugUtilsMessengerEXT(VkInstance instance, const VkDebugUtilsMessengerCreateInfoEXT* pCreateInfo, const VkAllocationCallbacks* pAllocator, VkDebugUtilsMessengerEXT* pDebugMessenger) {
+            auto func = (PFN_vkCreateDebugUtilsMessengerEXT) vkGetInstanceProcAddr(instance, "vkCreateDebugUtilsMessengerEXT");
+            if (func != nullptr) {
+                return func(instance, pCreateInfo, pAllocator, pDebugMessenger);
+            } else {
+                return VK_ERROR_EXTENSION_NOT_PRESENT;
+            }
+        }
+
+        void setupDebugMessenger() {
+            if (!enableValidationLayers) return;
+            //We'll need to fill in a structure with details about the messenger and its callback
+            VkDebugUtilsMessengerCreateInfoEXT createInfo = {};
+            createInfo.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT;
+            createInfo.messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
+            createInfo.messageType = VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;
+            createInfo.pfnUserCallback = debugCallback;
+            createInfo.pUserData = nullptr; // Optional
+
+            // create the VkDebugUtilsMessengerEXT
+            if (CreateDebugUtilsMessengerEXT(instance, &createInfo, nullptr, &debugMessenger) != VK_SUCCESS) {
+                throw std::runtime_error("failed to set up debug messenger!");
+            }
+
+        }
+
+
         void initWindow() {
             glfwInit();
             glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
@@ -121,6 +182,7 @@ class Viewer {
         }
         void initVulkan() {
             createInstance();
+            setupDebugMessenger();
         }
         void mainLoop() {
             while(!glfwWindowShouldClose(window)) {
