@@ -105,6 +105,16 @@ class Viewer {
         //and the window system to present results to the screen, 
         //we need to use the WSI (Window System Integration) extensions.
         VkSurfaceKHR surface;
+        VkSwapchainKHR swapChain;
+        // retrieving the handles of the VkImages in the swap chain
+        std::vector<VkImage> swapChainImages;
+        VkFormat swapChainImageFormat;
+        VkExtent2D swapChainExtent;
+
+        // To use any VkImage, including those in the swap chain, in the render pipeline we have to create 
+        // a VkImageView object. An image view is quite literally a view into an image.
+        // It describes how to access the image and which part of the image to access
+        std::vector<VkImageView> swapChainImageViews;
 
         void initWindow() {
             glfwInit();
@@ -122,6 +132,7 @@ class Viewer {
             createLogicalDevice();
             //must be created after logical device creation
             createSwapChain();
+            createImageViews();
         }
         void mainLoop() {
             while(!glfwWindowShouldClose(window)) {
@@ -129,6 +140,10 @@ class Viewer {
             }
         }
         void cleanUp() {
+            for (auto imageView : swapChainImageViews) {
+                vkDestroyImageView(device, imageView, nullptr);
+            }
+            vkDestroySwapchainKHR(device, swapChain, nullptr);
             vkDestroyDevice(device, nullptr);
 
             if (enableValidationLayers) {
@@ -141,6 +156,90 @@ class Viewer {
             glfwDestroyWindow(window);
 
             glfwTerminate();
+        }
+
+        void createImageViews() {
+            // resize the list to fit all of the image views we'll be creating
+            swapChainImageViews.resize(swapChainImages.size());
+            for (size_t i = 0; i < swapChainImages.size(); i++) {
+                VkImageViewCreateInfo createInfo = {};
+                createInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+                createInfo.image = swapChainImages[i];
+                //how the image data should be interpreted
+                createInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+                createInfo.format = swapChainImageFormat;
+                //swizzle the color channels around. Identity is default mapping
+                createInfo.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
+                createInfo.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
+                createInfo.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
+                createInfo.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
+                //What the image's purpose is and which part of the image should be accessed
+                createInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+                createInfo.subresourceRange.baseMipLevel = 0;
+                createInfo.subresourceRange.levelCount = 1;
+                createInfo.subresourceRange.baseArrayLayer = 0;
+                createInfo.subresourceRange.layerCount = 1;
+                if (vkCreateImageView(device, &createInfo, nullptr, &swapChainImageViews[i]) != VK_SUCCESS) {
+                    throw std::runtime_error("failed to create image views!");
+                }
+            }
+
+
+        }
+
+        void createSwapChain() {
+            SwapChainSupportDetails swapChainSupport = querySwapChainSupport(physicalDevice);
+
+            VkSurfaceFormatKHR surfaceFormat = chooseSwapSurfaceFormat(swapChainSupport.formats);
+            VkPresentModeKHR presentMode = chooseSwapPresentMode(swapChainSupport.presentModes);
+            VkExtent2D extent = chooseSwapExtent(swapChainSupport.capabilities);
+            //how many images we would like to have in the swap chain 
+            uint32_t imageCount = swapChainSupport.capabilities.minImageCount + 1;
+            // make sure to not exceed the maximum number of images 
+            if (swapChainSupport.capabilities.maxImageCount > 0 && imageCount > swapChainSupport.capabilities.maxImageCount) {
+                imageCount = swapChainSupport.capabilities.maxImageCount;
+            }
+
+            VkSwapchainCreateInfoKHR createInfo = {};
+            createInfo.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
+            createInfo.surface = surface;
+            createInfo.minImageCount = imageCount;
+            createInfo.imageFormat = surfaceFormat.format;
+            createInfo.imageColorSpace = surfaceFormat.colorSpace;
+            createInfo.imageExtent = extent;
+            createInfo.imageArrayLayers = 1;
+            createInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+
+            QueueFamilyIndices indices = findQueueFamilies(physicalDevice);
+            uint32_t queueFamilyIndices[] = {indices.graphicsFamily.value(), indices.presentFamily.value()};
+
+            if (indices.graphicsFamily != indices.presentFamily) {
+                createInfo.imageSharingMode = VK_SHARING_MODE_CONCURRENT;
+                createInfo.queueFamilyIndexCount = 2;
+                createInfo.pQueueFamilyIndices = queueFamilyIndices;
+            } else {
+                createInfo.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
+                createInfo.queueFamilyIndexCount = 0; // Optional
+                createInfo.pQueueFamilyIndices = nullptr; // Optional
+            }
+
+            createInfo.preTransform = swapChainSupport.capabilities.currentTransform;
+            createInfo.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
+            createInfo.presentMode = presentMode;
+            createInfo.clipped = VK_TRUE;
+            createInfo.oldSwapchain = VK_NULL_HANDLE;
+
+            if (vkCreateSwapchainKHR(device, &createInfo, nullptr, &swapChain) != VK_SUCCESS) {
+                throw std::runtime_error("failed to create swap chain!");
+            }
+
+            // retrieve the handles
+            vkGetSwapchainImagesKHR(device, swapChain, &imageCount, nullptr);
+            swapChainImages.resize(imageCount);
+            vkGetSwapchainImagesKHR(device, swapChain, &imageCount, swapChainImages.data());
+
+            swapChainImageFormat = surfaceFormat.format;
+            swapChainExtent = extent;
         }
 
         void createSurface() {
