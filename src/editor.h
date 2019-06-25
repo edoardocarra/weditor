@@ -19,12 +19,31 @@
 #include <vector>
 #include <cstring>
 #include <optional>
+#include <set>
 
 //validation layers are optional components that hook into Vulkan function calls to apply additional operations.
 // Once defined , they currently have no way to relay the debug messages back to our program.
 //To receive those messages we have to set up a debug messenger with a callback,
 const std::vector<const char*> validationLayers = {
     "VK_LAYER_KHRONOS_validation"
+};
+
+/* Vulkan does not have the concept of a "default framebuffer", hence it requires an infrastructure 
+that will own the buffers we will render to before we visualize them on the screen. 
+This infrastructure is known as the swap chain and must be created explicitly in Vulkan. 
+The swap chain is essentially a queue of images that are waiting to be presented to the screen. 
+
+image representation is tied to the windows system, so it is not part of the Vulkan Core.
+We need to enable enable the VK_KHR_swapchain device extension after querying for its support.
+*/
+const std::vector<const char*> deviceExtensions = {
+    VK_KHR_SWAPCHAIN_EXTENSION_NAME
+};
+
+struct SwapChainSupportDetails {
+    VkSurfaceCapabilitiesKHR capabilities;
+    std::vector<VkSurfaceFormatKHR> formats;
+    std::vector<VkPresentModeKHR> presentModes;
 };
 
 #ifdef NDEBUG
@@ -35,9 +54,12 @@ const std::vector<const char*> validationLayers = {
 
 struct QueueFamilyIndices {
     std::optional<uint32_t> graphicsFamily;
+    // we need to extend isDeviceSuitable to ensure that a device 
+    // can present images to the surface we created
+    std::optional<uint32_t> presentFamily;
 
     bool isComplete() {
-        return graphicsFamily.has_value();
+        return graphicsFamily.has_value() && presentFamily.has_value();
     }
 };
 
@@ -76,6 +98,13 @@ class Viewer {
         VkDevice device;
         //queue with graphics capabilities
         VkQueue graphicsQueue;
+        //create the presentation queue 
+        VkQueue presentQueue;
+        //Vulkan is a platform agnostic API, it can not interface directly 
+        //with the window system on its own.To establish the connection between Vulkan 
+        //and the window system to present results to the screen, 
+        //we need to use the WSI (Window System Integration) extensions.
+        VkSurfaceKHR surface;
 
         void initWindow() {
             glfwInit();
@@ -86,8 +115,13 @@ class Viewer {
         void initVulkan() {
             createInstance();
             setupDebugMessenger();
+            // The window surface needs to be created right after the instance creation, 
+            // because it can actually influence the physical device selection. 
+            createSurface(); 
             pickPhysicalDevice();
             createLogicalDevice();
+            //must be created after logical device creation
+            createSwapChain();
         }
         void mainLoop() {
             while(!glfwWindowShouldClose(window)) {
@@ -100,7 +134,8 @@ class Viewer {
             if (enableValidationLayers) {
                 DestroyDebugUtilsMessengerEXT(instance, debugMessenger, nullptr);
             }
-
+            vkDestroySurfaceKHR(instance, surface, nullptr);
+            
             vkDestroyInstance(instance, nullptr);
 
             glfwDestroyWindow(window);
@@ -108,18 +143,29 @@ class Viewer {
             glfwTerminate();
         }
 
+        void createSurface() {
+            if (glfwCreateWindowSurface(instance, window, nullptr, &surface) != VK_SUCCESS) {
+                throw std::runtime_error("failed to create window surface!");
+            }
+        }
+
         void createLogicalDevice() {
 
             QueueFamilyIndices indices = findQueueFamilies(physicalDevice);
-
-            VkDeviceQueueCreateInfo queueCreateInfo = {};
-            queueCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
-            queueCreateInfo.queueFamilyIndex = indices.graphicsFamily.value();
-            queueCreateInfo.queueCount = 1;
+            //we need to have multiple VkDeviceQueueCreateInfo structs to create a queue from both families.
+            std::vector<VkDeviceQueueCreateInfo> queueCreateInfos;
+            std::set<uint32_t> uniqueQueueFamilies = {indices.graphicsFamily.value(), indices.presentFamily.value()};
 
             //priorities to queues to influence the scheduling of command buffer execution
             float queuePriority = 1.0f;
-            queueCreateInfo.pQueuePriorities = &queuePriority;
+            for (uint32_t queueFamily : uniqueQueueFamilies) {
+                VkDeviceQueueCreateInfo queueCreateInfo = {};
+                queueCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+                queueCreateInfo.queueFamilyIndex = queueFamily;
+                queueCreateInfo.queueCount = 1;
+                queueCreateInfo.pQueuePriorities = &queuePriority;
+                queueCreateInfos.push_back(queueCreateInfo);
+            }
 
             //the set of device features that we'll be using
             VkPhysicalDeviceFeatures deviceFeatures = {};
@@ -127,13 +173,14 @@ class Viewer {
             VkDeviceCreateInfo createInfo = {};
             createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
 
-            createInfo.pQueueCreateInfos = &queueCreateInfo;
-            createInfo.queueCreateInfoCount = 1;
+            createInfo.pQueueCreateInfos = queueCreateInfos.data();
+            createInfo.queueCreateInfoCount = static_cast<uint32_t>(queueCreateInfos.size());
 
             createInfo.pEnabledFeatures = &deviceFeatures;
 
-            createInfo.enabledExtensionCount = 0;
-
+            createInfo.enabledExtensionCount = static_cast<uint32_t>(deviceExtensions.size());
+            createInfo.ppEnabledExtensionNames = deviceExtensions.data();
+            
             if (enableValidationLayers) {
                 createInfo.enabledLayerCount = static_cast<uint32_t>(validationLayers.size());
                 createInfo.ppEnabledLayerNames = validationLayers.data();
@@ -146,6 +193,7 @@ class Viewer {
             }
 
             vkGetDeviceQueue(device, indices.graphicsFamily.value(), 0, &graphicsQueue);
+            vkGetDeviceQueue(device, indices.presentFamily.value(), 0, &presentQueue);
         }
 
         void pickPhysicalDevice() {
@@ -173,8 +221,53 @@ class Viewer {
         //evaluate the suitability of a device
         bool isDeviceSuitable(VkPhysicalDevice device) {
             QueueFamilyIndices indices = findQueueFamilies(device);
+            bool extensionsSupported = checkDeviceExtensionSupport(device);
+            bool swapChainAdequate = false;
+            if (extensionsSupported) {
+                SwapChainSupportDetails swapChainSupport = querySwapChainSupport(device);
+                swapChainAdequate = !swapChainSupport.formats.empty() && !swapChainSupport.presentModes.empty();
+            }
+            return indices.isComplete() && extensionsSupported && swapChainAdequate;
+        }
+        //enumerate the extensions and check if all of the required extensions are amongst them.
+        bool checkDeviceExtensionSupport(VkPhysicalDevice device) {
+            uint32_t extensionCount;
+            vkEnumerateDeviceExtensionProperties(device, nullptr, &extensionCount, nullptr);
 
-            return indices.isComplete();
+            std::vector<VkExtensionProperties> availableExtensions(extensionCount);
+            vkEnumerateDeviceExtensionProperties(device, nullptr, &extensionCount, availableExtensions.data());
+
+            std::set<std::string> requiredExtensions(deviceExtensions.begin(), deviceExtensions.end());
+
+            for (const auto& extension : availableExtensions) {
+                requiredExtensions.erase(extension.extensionName);
+            }
+
+            return requiredExtensions.empty();
+        }
+
+        SwapChainSupportDetails querySwapChainSupport(VkPhysicalDevice device) {
+            SwapChainSupportDetails details;
+            //determining the supported capabilitie
+            vkGetPhysicalDeviceSurfaceCapabilitiesKHR(device, surface, &details.capabilities);
+            // querying the supported surface formats
+            uint32_t formatCount;
+            vkGetPhysicalDeviceSurfaceFormatsKHR(device, surface, &formatCount, nullptr);
+
+            if (formatCount != 0) {
+                details.formats.resize(formatCount);
+                vkGetPhysicalDeviceSurfaceFormatsKHR(device, surface, &formatCount, details.formats.data());
+            }
+            // querying the supported presentation modes
+            uint32_t presentModeCount;
+            vkGetPhysicalDeviceSurfacePresentModesKHR(device, surface, &presentModeCount, nullptr);
+
+            if (presentModeCount != 0) {
+                details.presentModes.resize(presentModeCount);
+                vkGetPhysicalDeviceSurfacePresentModesKHR(device, surface, &presentModeCount, details.presentModes.data());
+            }
+
+            return details;
         }
 
         //every operation in Vulkan, anything from drawing to uploading textures, 
@@ -194,6 +287,13 @@ class Viewer {
             for (const auto& queueFamily : queueFamilies) {
                 if (queueFamily.queueCount > 0 && queueFamily.queueFlags & VK_QUEUE_GRAPHICS_BIT) {
                     indices.graphicsFamily = i;
+                }
+                // look for a queue family that has the capability of presenting to our window surface
+                VkBool32 presentSupport = false;
+                vkGetPhysicalDeviceSurfaceSupportKHR(device, i, surface, &presentSupport);
+
+                if (queueFamily.queueCount > 0 && presentSupport) {
+                    indices.presentFamily = i;
                 }
 
                 if (indices.isComplete()) {
@@ -303,6 +403,49 @@ class Viewer {
             }
 
             return true;
+        }
+
+        // Each VkSurfaceFormatKHR entry contains a format and a colorSpace member. 
+        // The format member specifies the color channels and types.
+        VkSurfaceFormatKHR chooseSwapSurfaceFormat(const std::vector<VkSurfaceFormatKHR>& availableFormats) {
+
+            for (const auto& availableFormat : availableFormats) {
+                if (availableFormat.format == VK_FORMAT_B8G8R8A8_UNORM && availableFormat.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) {
+                    return availableFormat;
+                }
+            }
+
+            return availableFormats[0];
+        }
+
+        // The presentation mode is arguably the most important setting for the swap chain, 
+        // because it represents the actual conditions for showing images to the scree
+        VkPresentModeKHR chooseSwapPresentMode(const std::vector<VkPresentModeKHR>& availablePresentModes) {
+            VkPresentModeKHR bestMode = VK_PRESENT_MODE_FIFO_KHR;
+
+            for (const auto& availablePresentMode : availablePresentModes) {
+                if (availablePresentMode == VK_PRESENT_MODE_MAILBOX_KHR) {
+                    return availablePresentMode;
+                } else if (availablePresentMode == VK_PRESENT_MODE_IMMEDIATE_KHR) {
+                    bestMode = availablePresentMode;
+                }
+            }
+
+            return bestMode;
+        }
+        // The swap extent is the resolution of the swap chain images and it's 
+        // almost always exactly equal to the resolution of the window that we're drawing to
+        VkExtent2D chooseSwapExtent(const VkSurfaceCapabilitiesKHR& capabilities) {
+            if (capabilities.currentExtent.width != std::numeric_limits<uint32_t>::max()) {
+                return capabilities.currentExtent;
+            } else {
+                VkExtent2D actualExtent = {WIDTH, HEIGHT};
+
+                actualExtent.width = std::max(capabilities.minImageExtent.width, std::min(capabilities.maxImageExtent.width, actualExtent.width));
+                actualExtent.height = std::max(capabilities.minImageExtent.height, std::min(capabilities.maxImageExtent.height, actualExtent.height));
+
+                return actualExtent;
+            }
         }
 
         //To relay the debug messages back to our program we need to setup a 
