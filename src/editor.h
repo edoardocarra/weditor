@@ -175,6 +175,49 @@ class Viewer {
         void createGraphicsPipeline() {
             auto vertShaderCode = readFile("shaders/vert.spv");
             auto fragShaderCode = readFile("shaders/frag.spv");
+
+            /* Shader modules are just a thin wrapper around the shader bytecode that we've previously 
+            loaded from a file and the functions defined in it */
+            VkShaderModule vertShaderModule = createShaderModule(vertShaderCode);
+            VkShaderModule fragShaderModule = createShaderModule(fragShaderCode);
+
+            //To actually use the shaders we'll need to assign them to a specific pipeline stage
+            VkPipelineShaderStageCreateInfo vertShaderStageInfo = {};
+            vertShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+            //tell Vulkan in which pipeline stage the shader is going to be used. 
+            vertShaderStageInfo.stage = VK_SHADER_STAGE_VERTEX_BIT;
+            //the shader module containing the code
+            vertShaderStageInfo.module = vertShaderModule;
+            //the function to invoke, known as the entrypoint
+            vertShaderStageInfo.pName = "main";
+
+            VkPipelineShaderStageCreateInfo fragShaderStageInfo = {};
+            fragShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+            fragShaderStageInfo.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+            fragShaderStageInfo.module = fragShaderModule;
+            fragShaderStageInfo.pName = "main";
+
+            VkPipelineShaderStageCreateInfo shaderStages[] = {vertShaderStageInfo, fragShaderStageInfo};
+
+/*          The compilation and linking of the SPIR-V bytecode to machine code for execution by the GPU
+            doesn't happen until the graphics pipeline is created. 
+            So we're allowed to destroy the shader modules again as soon as pipeline creation is finished, */
+            vkDestroyShaderModule(device, fragShaderModule, nullptr);
+            vkDestroyShaderModule(device, vertShaderModule, nullptr);
+            
+        }
+        //we have to wrap the shader code in a VkShaderModule
+        VkShaderModule createShaderModule(const std::vector<char>& code) {
+            VkShaderModuleCreateInfo createInfo = {};
+            createInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+            createInfo.codeSize = code.size();
+            createInfo.pCode = reinterpret_cast<const uint32_t*>(code.data());
+
+            VkShaderModule shaderModule;
+            if (vkCreateShaderModule(device, &createInfo, nullptr, &shaderModule) != VK_SUCCESS) {
+                throw std::runtime_error("failed to create shader module!");
+            }
+            return shaderModule; //return the wrapper around the shader bytecode
         }
 
         void createImageViews() {
