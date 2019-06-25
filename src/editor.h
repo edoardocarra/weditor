@@ -20,6 +20,7 @@
 #include <cstring>
 #include <optional>
 #include <set>
+#include <fstream>
 
 //validation layers are optional components that hook into Vulkan function calls to apply additional operations.
 // Once defined , they currently have no way to relay the debug messages back to our program.
@@ -79,6 +80,22 @@ void DestroyDebugUtilsMessengerEXT(VkInstance instance, VkDebugUtilsMessengerEXT
     }
 }
 
+static std::vector<char> readFile(const std::string& filename) {
+    std::ifstream file(filename, std::ios::ate | std::ios::binary);
+
+    if (!file.is_open()) {
+        throw std::runtime_error("failed to open file!");
+    }
+
+    size_t fileSize = (size_t) file.tellg();
+    std::vector<char> buffer(fileSize);
+
+    file.seekg(0);
+    file.read(buffer.data(), fileSize);
+    file.close();
+    return buffer;
+}
+
 class Viewer {
     public:
         void run() {
@@ -133,6 +150,7 @@ class Viewer {
             //must be created after logical device creation
             createSwapChain();
             createImageViews();
+            createGraphicsPipeline();
         }
         void mainLoop() {
             while(!glfwWindowShouldClose(window)) {
@@ -145,17 +163,18 @@ class Viewer {
             }
             vkDestroySwapchainKHR(device, swapChain, nullptr);
             vkDestroyDevice(device, nullptr);
-
             if (enableValidationLayers) {
                 DestroyDebugUtilsMessengerEXT(instance, debugMessenger, nullptr);
             }
             vkDestroySurfaceKHR(instance, surface, nullptr);
-            
             vkDestroyInstance(instance, nullptr);
-
             glfwDestroyWindow(window);
-
             glfwTerminate();
+        }
+
+        void createGraphicsPipeline() {
+            auto vertShaderCode = readFile("shaders/vert.spv");
+            auto fragShaderCode = readFile("shaders/frag.spv");
         }
 
         void createImageViews() {
