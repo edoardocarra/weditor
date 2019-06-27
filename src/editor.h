@@ -2,15 +2,12 @@
 #define EDITOR_H
 
 #define GLFW_INCLUDE_VULKAN
-#define GLM_FORCE_RADIANS
-#define GLM_FORCE_DEPTH_ZERO_TO_ONE
 
 #define WIDTH 800
 #define HEIGHT 600
 
-#include "GLM/vec4.hpp"
-#include "GLM/mat4x4.hpp"
 #include "GLFW/glfw3.h"
+#include <glm/glm.hpp>
 #include <iostream>
 #include <stdio.h>
 #include <stdexcept>
@@ -21,6 +18,47 @@
 #include <optional>
 #include <set>
 #include <fstream>
+#include <array>
+
+struct Vertex {
+    glm::vec2 pos;
+    glm::vec3 color;
+    
+    //A vertex binding describes at which rate to load data from memory throughout the vertices
+    static VkVertexInputBindingDescription getBindingDescription() {
+        VkVertexInputBindingDescription bindingDescription = {};
+        bindingDescription.binding = 0;
+        bindingDescription.stride = sizeof(Vertex);
+        bindingDescription.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+
+        return bindingDescription;
+    }
+
+    // An attribute description struct describes how to extract a vertex attribute 
+    //from a chunk of vertex data originating from a binding description
+    static std::array<VkVertexInputAttributeDescription, 2> getAttributeDescriptions() {
+        std::array<VkVertexInputAttributeDescription, 2> attributeDescriptions = {};
+        //position attribute
+        attributeDescriptions[0].binding = 0;
+        attributeDescriptions[0].location = 0;
+        attributeDescriptions[0].format = VK_FORMAT_R32G32_SFLOAT;
+        attributeDescriptions[0].offset = offsetof(Vertex, pos);
+        //color attribute
+        attributeDescriptions[1].binding = 0;
+        attributeDescriptions[1].location = 1;
+        attributeDescriptions[1].format = VK_FORMAT_R32G32B32_SFLOAT;
+        attributeDescriptions[1].offset = offsetof(Vertex, color);
+
+        return attributeDescriptions;
+    }
+
+};
+
+const std::vector<Vertex> vertices = {
+    {{0.0f, -0.5f}, {1.0f, 0.0f, 0.0f}},
+    {{0.5f, 0.5f}, {0.0f, 1.0f, 0.0f}},
+    {{-0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}}
+};
 
 /* The stages that the current frame has already progressed through are idle 
 and could already be used for a next frame*/
@@ -553,13 +591,17 @@ class Viewer {
 
             VkPipelineShaderStageCreateInfo shaderStages[] = {vertShaderStageInfo, fragShaderStageInfo};
 
+            // set up the graphics pipeline to accept vertex data 
+            auto bindingDescription = Vertex::getBindingDescription();
+            auto attributeDescriptions = Vertex::getAttributeDescriptions();
+
             //structure to the format of the vertex data that will be passed to the vertex shader
             VkPipelineVertexInputStateCreateInfo vertexInputInfo = {};
             vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-            vertexInputInfo.vertexBindingDescriptionCount = 0;
-            vertexInputInfo.pVertexBindingDescriptions = nullptr; // Optional
-            vertexInputInfo.vertexAttributeDescriptionCount = 0;
-            vertexInputInfo.pVertexAttributeDescriptions = nullptr; // Optional
+            vertexInputInfo.vertexBindingDescriptionCount = 1;
+            vertexInputInfo.pVertexBindingDescriptions = &bindingDescription; // Optional
+            vertexInputInfo.vertexAttributeDescriptionCount = static_cast<uint32_t>(attributeDescriptions.size());;
+            vertexInputInfo.pVertexAttributeDescriptions = attributeDescriptions.data(); // Optional
 
             //what kind of geometry will be drawn from the vertices and if primitive restart should be enabled
             VkPipelineInputAssemblyStateCreateInfo inputAssembly = {};
@@ -790,6 +832,7 @@ class Viewer {
            In that case we will need to call this function 
         */
         void recreateSwapChain() {
+            //special kind of window resizing: when framebuffer size is 0
             int width = 0, height = 0;
             while (width == 0 || height == 0) {
                 glfwGetFramebufferSize(window, &width, &height);
