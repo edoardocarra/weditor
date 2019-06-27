@@ -141,15 +141,21 @@ class Viewer {
 
         VkPipeline graphicsPipeline;
 
-/* 
-- The attachments specified during render pass creation are bound by wrapping them into a VkFramebuffer object
-- A framebuffer object references all of the VkImageView objects that represent the attachments
-- the image that we have to use for the attachment depends on which image the swap chain returns 
-  when we retrieve one for presentation
-- we have to create a framebuffer for all of the images in the swap chain and use the one that 
-  corresponds to the retrieved image at drawing time.
-*/
+        /* 
+        - The attachments specified during render pass creation are bound by wrapping them into a VkFramebuffer object
+        - A framebuffer object references all of the VkImageView objects that represent the attachments
+        - the image that we have to use for the attachment depends on which image the swap chain returns 
+        when we retrieve one for presentation
+        - we have to create a framebuffer for all of the images in the swap chain and use the one that 
+        corresponds to the retrieved image at drawing time.
+        */
         std::vector<VkFramebuffer> swapChainFramebuffers;
+
+        //we have to record all of the operations you want to perform in command buffer objects
+        VkCommandPool commandPool;
+/*      Because one of the drawing commands involves binding the right VkFramebuffer, 
+        we'll actually have to record a command buffer for every image in the swap chain once again.  */
+        std::vector<VkCommandBuffer> commandBuffers;
 
         void initWindow() {
             glfwInit();
@@ -170,6 +176,9 @@ class Viewer {
             createImageViews();
             createRenderPass();
             createGraphicsPipeline();
+            createFramebuffers();
+            createCommandPool();
+            createCommandBuffers();
         }
         void mainLoop() {
             while(!glfwWindowShouldClose(window)) {
@@ -177,6 +186,10 @@ class Viewer {
             }
         }
         void cleanUp() {
+            vkDestroyCommandPool(device, commandPool, nullptr);
+            for (auto framebuffer : swapChainFramebuffers) {
+                vkDestroyFramebuffer(device, framebuffer, nullptr);
+            }
             vkDestroyPipeline(device, graphicsPipeline, nullptr);
             vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
             vkDestroyRenderPass(device, renderPass, nullptr);
@@ -192,6 +205,102 @@ class Viewer {
             vkDestroyInstance(instance, nullptr);
             glfwDestroyWindow(window);
             glfwTerminate();
+        }
+
+        void createCommandBuffers() {
+            commandBuffers.resize(swapChainFramebuffers.size());
+            VkCommandBufferAllocateInfo allocInfo = {};
+            allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+            allocInfo.commandPool = commandPool;
+            //PRIMARY: Can be submitted to a queue for execution, but cannot be called from other command buffers
+            allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+            allocInfo.commandBufferCount = (uint32_t) commandBuffers.size();
+
+            if (vkAllocateCommandBuffers(device, &allocInfo, commandBuffers.data()) != VK_SUCCESS) {
+                throw std::runtime_error("failed to allocate command buffers!");
+            }
+
+            // recording a command buffer
+            for (size_t i = 0; i < commandBuffers.size(); i++) {
+                VkCommandBufferBeginInfo beginInfo = {};
+                beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+                // The command buffer can be resubmitted while it is also already pending execution
+                beginInfo.flags = VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT;
+                beginInfo.pInheritanceInfo = nullptr; // Optional
+
+                if (vkBeginCommandBuffer(commandBuffers[i], &beginInfo) != VK_SUCCESS) {
+                    throw std::runtime_error("failed to begin recording command buffer!");
+                }
+
+                //beginning the render pass with vkCmdBeginRenderPass
+                VkRenderPassBeginInfo renderPassInfo = {};
+                renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+                renderPassInfo.renderPass = renderPass;
+                renderPassInfo.framebuffer = swapChainFramebuffers[i];
+                renderPassInfo.renderArea.offset = {0, 0};
+                renderPassInfo.renderArea.extent = swapChainExtent;
+                VkClearValue clearColor = {0.0f, 0.0f, 0.0f, 1.0f};
+                renderPassInfo.clearValueCount = 1;
+                renderPassInfo.pClearValues = &clearColor;
+                /*
+                - command buffer to record the command to
+                - The details of the render pass we've just provided
+                - The render pass commands will be embedded in the primary command buffer itself 
+                  and no secondary command buffers will be executed
+                */
+                vkCmdBeginRenderPass(commandBuffers[i], &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+                vkCmdBindPipeline(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
+                // vertexCount, instanceCount, firstVertex(offset into the vertex buffer), firstInstance( offset for instanced rendering)
+                vkCmdDraw(commandBuffers[i], 3, 1, 0, 0);
+                vkCmdEndRenderPass(commandBuffers[i]);
+                
+                if (vkEndCommandBuffer(commandBuffers[i]) != VK_SUCCESS) {
+                    throw std::runtime_error("failed to record command buffer!");
+                }
+
+            }
+
+        }
+
+        void createCommandPool() {
+
+            QueueFamilyIndices queueFamilyIndices = findQueueFamilies(physicalDevice);
+
+            //Command buffers are executed by submitting them on one of the device queues
+            VkCommandPoolCreateInfo poolInfo = {};
+            poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+            // We're going to record commands for drawing, which is why we've chosen the graphics queue family.
+            poolInfo.queueFamilyIndex = queueFamilyIndices.graphicsFamily.value();
+            poolInfo.flags = 0; // Optional
+
+            if (vkCreateCommandPool(device, &poolInfo, nullptr, &commandPool) != VK_SUCCESS) {
+                throw std::runtime_error("failed to create command pool!");
+            }
+
+        }
+
+        void createFramebuffers() {
+            swapChainFramebuffers.resize(swapChainImageViews.size());
+            //iterate through the image views and create framebuffers from them
+            for (size_t i = 0; i < swapChainImageViews.size(); i++) {
+                VkImageView attachments[] = {
+                    swapChainImageViews[i]
+                };
+
+                VkFramebufferCreateInfo framebufferInfo = {};
+                framebufferInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+                //specify with which renderPass the framebuffer needs to be compatible
+                framebufferInfo.renderPass = renderPass;
+                framebufferInfo.attachmentCount = 1;
+                framebufferInfo.pAttachments = attachments;
+                framebufferInfo.width = swapChainExtent.width;
+                framebufferInfo.height = swapChainExtent.height;
+                framebufferInfo.layers = 1;
+
+                if (vkCreateFramebuffer(device, &framebufferInfo, nullptr, &swapChainFramebuffers[i]) != VK_SUCCESS) {
+                    throw std::runtime_error("failed to create framebuffer!");
+                }
+            }
         }
 
 /*      We need to tell Vulkan about the framebuffer attachments that will be 
