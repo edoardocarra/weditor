@@ -22,6 +22,10 @@
 #include <set>
 #include <fstream>
 
+/* The stages that the current frame has already progressed through are idle 
+and could already be used for a next frame*/
+const int MAX_FRAMES_IN_FLIGHT = 2;
+
 //validation layers are optional components that hook into Vulkan function calls to apply additional operations.
 // Once defined , they currently have no way to relay the debug messages back to our program.
 //To receive those messages we have to set up a debug messenger with a callback,
@@ -157,8 +161,16 @@ class Viewer {
         we'll actually have to record a command buffer for every image in the swap chain once again.  */
         std::vector<VkCommandBuffer> commandBuffers;
 
-        VkSemaphore imageAvailableSemaphore;
-        VkSemaphore renderFinishedSemaphore;
+        //Each frame should have its own set of semaphores
+        std::vector<VkSemaphore> imageAvailableSemaphores;
+        std::vector<VkSemaphore> renderFinishedSemaphores;
+        //To use the right pair of semaphores every time, we need to keep track of the current frame
+        size_t currentFrame = 0;
+
+/*       To perform CPU-GPU synchronization, we build a fence for each frame
+        Fences are mainly designed to synchronize your application itself with rendering operation,
+        whereas semaphores are used to synchronize operations within or across command queues.  */
+        std::vector<VkFence> inFlightFences;
 
         void initWindow() {
             glfwInit();
@@ -189,10 +201,14 @@ class Viewer {
                 glfwPollEvents();
                 drawFrame();
             }
+            //wait for the logical device to finish operations before exiting and destroy the window
+            vkDeviceWaitIdle(device);
         }
         void cleanUp() {
-            vkDestroySemaphore(device, renderFinishedSemaphore, nullptr);
-            vkDestroySemaphore(device, imageAvailableSemaphore, nullptr);
+            for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+                vkDestroySemaphore(device, renderFinishedSemaphores[i], nullptr);
+                vkDestroySemaphore(device, imageAvailableSemaphores[i], nullptr);
+            }
             vkDestroyCommandPool(device, commandPool, nullptr);
             for (auto framebuffer : swapChainFramebuffers) {
                 vkDestroyFramebuffer(device, framebuffer, nullptr);
@@ -214,14 +230,19 @@ class Viewer {
             glfwTerminate();
         }
 
-
         void createSemaphores() {
+            imageAvailableSemaphores.resize(MAX_FRAMES_IN_FLIGHT);
+            renderFinishedSemaphores.resize(MAX_FRAMES_IN_FLIGHT);
+
             VkSemaphoreCreateInfo semaphoreInfo = {};
             semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
-            if (vkCreateSemaphore(device, &semaphoreInfo, nullptr, &imageAvailableSemaphore) != VK_SUCCESS ||
-                vkCreateSemaphore(device, &semaphoreInfo, nullptr, &renderFinishedSemaphore) != VK_SUCCESS) {
 
-                throw std::runtime_error("failed to create semaphores!");
+            for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+                if (vkCreateSemaphore(device, &semaphoreInfo, nullptr, &imageAvailableSemaphores[i]) != VK_SUCCESS ||
+                    vkCreateSemaphore(device, &semaphoreInfo, nullptr, &renderFinishedSemaphores[i]) != VK_SUCCESS) {
+
+                    throw std::runtime_error("failed to create semaphores for a frame!");
+                }
             }
         }
 
@@ -236,13 +257,13 @@ class Viewer {
         void drawFrame() {
             // acquire an image from the swap chain
             uint32_t imageIndex;
-            vkAcquireNextImageKHR(device, swapChain, std::numeric_limits<uint64_t>::max(), imageAvailableSemaphore, VK_NULL_HANDLE, &imageIndex);
+            vkAcquireNextImageKHR(device, swapChain, std::numeric_limits<uint64_t>::max(), imageAvailableSemaphores[currentFrame], VK_NULL_HANDLE, &imageIndex);
         
             //Queue submission and synchronization 
             VkSubmitInfo submitInfo = {};
             submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
             //We want to wait with writing colors to the image until it's available,
-            VkSemaphore waitSemaphores[] = {imageAvailableSemaphore};
+            VkSemaphore waitSemaphores[] = {imageAvailableSemaphores[currentFrame]};
             VkPipelineStageFlags waitStages[] = {VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
             submitInfo.waitSemaphoreCount = 1;
             submitInfo.pWaitSemaphores = waitSemaphores;
@@ -251,7 +272,7 @@ class Viewer {
             submitInfo.commandBufferCount = 1;
             submitInfo.pCommandBuffers = &commandBuffers[imageIndex];
 
-            VkSemaphore signalSemaphores[] = {renderFinishedSemaphore};
+            VkSemaphore signalSemaphores[] = {renderFinishedSemaphores[currentFrame]};
             submitInfo.signalSemaphoreCount = 1;
             submitInfo.pSignalSemaphores = signalSemaphores;
 
@@ -278,6 +299,14 @@ class Viewer {
             presentInfo.pResults = nullptr;
             // submits the request to present an image to the swap chain
             vkQueuePresentKHR(presentQueue, &presentInfo);
+
+            /* The application is rapidly submitting work in the drawFrame function, 
+            but doesn't actually check if any of it finishes. If the CPU is submitting
+            work faster than the GPU can keep up with then the queue will slowly fill up with work, 
+            and the memory usage of the application will slowly growing */
+            vkQueueWaitIdle(presentQueue);
+            // with the modulo operator we ensure that the frame index loops around after every MAX_FRAMES_IN_FLIGHT enqueued frames.
+            currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
 
         }
 
