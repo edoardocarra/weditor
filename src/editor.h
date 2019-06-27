@@ -236,6 +236,8 @@ class Viewer {
             createGraphicsPipeline();
             createFramebuffers();
             createCommandPool();
+            //  buffers do not automatically allocate memory for themselves. We must do that by our own
+            createVertexBuffer();
             createCommandBuffers();
             createSyncObjects();
         }
