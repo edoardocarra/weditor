@@ -176,6 +176,56 @@ class Viewer {
             auto vertShaderCode = readFile("shaders/vert.spv");
             auto fragShaderCode = readFile("shaders/frag.spv");
 
+            //structure to the format of the vertex data that will be passed to the vertex shader
+            VkPipelineVertexInputStateCreateInfo vertexInputInfo = {};
+            vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+            vertexInputInfo.vertexBindingDescriptionCount = 0;
+            vertexInputInfo.pVertexBindingDescriptions = nullptr; // Optional
+            vertexInputInfo.vertexAttributeDescriptionCount = 0;
+            vertexInputInfo.pVertexAttributeDescriptions = nullptr; // Optional
+
+            //what kind of geometry will be drawn from the vertices and if primitive restart should be enabled
+            VkPipelineInputAssemblyStateCreateInfo inputAssembly = {};
+            inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+            inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+            inputAssembly.primitiveRestartEnable = VK_FALSE;
+
+            //the region of the framebuffer that the output will be rendered to. 
+            VkViewport viewport = {};
+            viewport.x = 0.0f;
+            viewport.y = 0.0f;
+            //the size of the swap chain and its images may differ from the WIDTH and HEIGHT of the window.
+            viewport.width = (float) swapChainExtent.width;
+            viewport.height = (float) swapChainExtent.height;
+            viewport.minDepth = 0.0f;
+            viewport.maxDepth = 1.0f;
+
+            /* While viewports define the transformation from the image to the framebuffer, 
+            scissor rectangles define in which regions pixels will actually be stored. 
+            Any pixels outside the scissor rectangles will be discarded by the rasterizer */
+            VkRect2D scissor = {};
+            scissor.offset = {0, 0};
+            scissor.extent = swapChainExtent; //we want to draw to the entire framebuffer
+
+            // viewport and scissor rectangle need to be combined into a viewport state
+            VkPipelineViewportStateCreateInfo viewportState = {};
+            viewportState.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+            viewportState.viewportCount = 1;
+            viewportState.pViewports = &viewport;
+            viewportState.scissorCount = 1;
+            viewportState.pScissors = &scissor;
+
+/*          The rasterizer takes the geometry that is shaped by the vertices from the vertex 
+            shader and turns it into fragments to be colored by the fragment shader. */
+/*          It also performs depth testing, face culling and the scissor test, and it can be configured 
+            to output fragments that fill entire polygons or just the edges (wireframe rendering). */
+            VkPipelineRasterizationStateCreateInfo rasterizer = {};
+            rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+            rasterizer.depthClampEnable = VK_FALSE; //fragments that are beyond the near and far planes are discarded
+            rasterizer.rasterizerDiscardEnable = VK_FALSE; //the geometry is passed through the rasterizer stage
+            // how fragments are generated for geometry
+            rasterizer.polygonMode = VK_POLYGON_MODE_FILL; //fill the area of the polygon with fragments - if VK_POLYGON_MODE_LINE, we render wireframes
+
             /* Shader modules are just a thin wrapper around the shader bytecode that we've previously 
             loaded from a file and the functions defined in it */
             VkShaderModule vertShaderModule = createShaderModule(vertShaderCode);
