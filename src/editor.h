@@ -194,7 +194,7 @@ class Viewer {
             createFramebuffers();
             createCommandPool();
             createCommandBuffers();
-            createSemaphores();
+            createSyncObjects();
         }
         void mainLoop() {
             while(!glfwWindowShouldClose(window)) {
@@ -208,6 +208,7 @@ class Viewer {
             for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
                 vkDestroySemaphore(device, renderFinishedSemaphores[i], nullptr);
                 vkDestroySemaphore(device, imageAvailableSemaphores[i], nullptr);
+                vkDestroyFence(device, inFlightFences[i], nullptr);
             }
             vkDestroyCommandPool(device, commandPool, nullptr);
             for (auto framebuffer : swapChainFramebuffers) {
@@ -230,18 +231,28 @@ class Viewer {
             glfwTerminate();
         }
 
-        void createSemaphores() {
+        void createSyncObjects() {
             imageAvailableSemaphores.resize(MAX_FRAMES_IN_FLIGHT);
             renderFinishedSemaphores.resize(MAX_FRAMES_IN_FLIGHT);
+            inFlightFences.resize(MAX_FRAMES_IN_FLIGHT);
 
             VkSemaphoreCreateInfo semaphoreInfo = {};
             semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
 
+/*          By default, fences are created in the unsignaled state.
+            we can change the fence creation to initialize it in the signaled state as 
+            if we had rendered an initial frame that finished */
+            VkFenceCreateInfo fenceInfo = {};
+            fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+            fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
+
+
             for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
                 if (vkCreateSemaphore(device, &semaphoreInfo, nullptr, &imageAvailableSemaphores[i]) != VK_SUCCESS ||
-                    vkCreateSemaphore(device, &semaphoreInfo, nullptr, &renderFinishedSemaphores[i]) != VK_SUCCESS) {
+                    vkCreateSemaphore(device, &semaphoreInfo, nullptr, &renderFinishedSemaphores[i]) != VK_SUCCESS ||
+                    vkCreateFence(device, &fenceInfo, nullptr, &inFlightFences[i]) != VK_SUCCESS) {
 
-                    throw std::runtime_error("failed to create semaphores for a frame!");
+                    throw std::runtime_error("failed to create synchronization objects for a frame!");
                 }
             }
         }
@@ -255,6 +266,10 @@ class Viewer {
         We want to synchronize the queue operations of draw commands and presentation
         */
         void drawFrame() {
+            //takes an array of fences and waits for either any or all of them to be signaled before returning
+            vkWaitForFences(device, 1, &inFlightFences[currentFrame], VK_TRUE, std::numeric_limits<uint64_t>::max());
+            vkResetFences(device, 1, &inFlightFences[currentFrame]);
+
             // acquire an image from the swap chain
             uint32_t imageIndex;
             vkAcquireNextImageKHR(device, swapChain, std::numeric_limits<uint64_t>::max(), imageAvailableSemaphores[currentFrame], VK_NULL_HANDLE, &imageIndex);
@@ -277,7 +292,7 @@ class Viewer {
             submitInfo.pSignalSemaphores = signalSemaphores;
 
             //We can now submit the command buffer to the graphics queue
-            if (vkQueueSubmit(graphicsQueue, 1, &submitInfo, VK_NULL_HANDLE) != VK_SUCCESS) {
+            if (vkQueueSubmit(graphicsQueue, 1, &submitInfo, inFlightFences[currentFrame]) != VK_SUCCESS) {
                 throw std::runtime_error("failed to submit draw command buffer!");
             }
 
