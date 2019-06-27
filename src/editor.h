@@ -212,6 +212,8 @@ class Viewer {
         //member variable that flags that a resize has happened
         bool framebufferResized = false;
 
+        VkBuffer vertexBuffer;
+
         void initWindow() {
             glfwInit();
             glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
@@ -236,7 +238,7 @@ class Viewer {
             createGraphicsPipeline();
             createFramebuffers();
             createCommandPool();
-            //  buffers do not automatically allocate memory for themselves. We must do that by our own
+            // buffers do not automatically allocate memory for themselves. We must do that by our own
             createVertexBuffer();
             createCommandBuffers();
             createSyncObjects();
@@ -252,6 +254,8 @@ class Viewer {
         void cleanUp() {
             cleanupSwapChain();
 
+            vkDestroyBuffer(device, vertexBuffer, nullptr);
+            
             for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
                 vkDestroySemaphore(device, renderFinishedSemaphores[i], nullptr);
                 vkDestroySemaphore(device, imageAvailableSemaphores[i], nullptr);
@@ -272,6 +276,25 @@ class Viewer {
             glfwDestroyWindow(window);
 
             glfwTerminate();
+        }
+
+        void createVertexBuffer() {
+
+            VkBufferCreateInfo bufferInfo = {};
+            bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+            bufferInfo.size = sizeof(vertices[0]) * vertices.size();
+            // for which purposes the data in the buffer is going to be used
+            bufferInfo.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+            bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+            if (vkCreateBuffer(device, &bufferInfo, nullptr, &vertexBuffer) != VK_SUCCESS) {
+                throw std::runtime_error("failed to create vertex buffer!");
+            }
+
+            //assigning memory to the buffer
+            VkMemoryRequirements memRequirements;
+            vkGetBufferMemoryRequirements(device, vertexBuffer, &memRequirements);
+            
+
         }
 
 /*      Detect resizes with the GLFW framework, creating a callback
