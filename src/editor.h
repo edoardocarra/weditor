@@ -55,7 +55,7 @@ struct Vertex {
 };
 
 const std::vector<Vertex> vertices = {
-    {{0.0f, -0.5f}, {1.0f, 0.0f, 0.0f}},
+    {{0.0f, -0.5f}, {1.0f, 1.0f, 1.0f}},
     {{0.5f, 0.5f}, {0.0f, 1.0f, 0.0f}},
     {{-0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}}
 };
@@ -211,8 +211,9 @@ class Viewer {
         std::vector<VkFence> inFlightFences;
         //member variable that flags that a resize has happened
         bool framebufferResized = false;
-
+        
         VkBuffer vertexBuffer;
+        VkDeviceMemory vertexBufferMemory;
 
         void initWindow() {
             glfwInit();
@@ -255,6 +256,7 @@ class Viewer {
             cleanupSwapChain();
 
             vkDestroyBuffer(device, vertexBuffer, nullptr);
+            vkFreeMemory(device, vertexBufferMemory, nullptr);
             
             for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
                 vkDestroySemaphore(device, renderFinishedSemaphores[i], nullptr);
@@ -290,10 +292,69 @@ class Viewer {
                 throw std::runtime_error("failed to create vertex buffer!");
             }
 
-            //assigning memory to the buffer
+            //assigning memory to the buffer 
             VkMemoryRequirements memRequirements;
+            //query for the buffer memory requirements
             vkGetBufferMemoryRequirements(device, vertexBuffer, &memRequirements);
             
+            VkMemoryAllocateInfo allocInfo = {};
+            allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+            allocInfo.allocationSize = memRequirements.size;
+            allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+            if (vkAllocateMemory(device, &allocInfo, nullptr, &vertexBufferMemory) != VK_SUCCESS) {
+                throw std::runtime_error("failed to allocate vertex buffer memory!");
+            }
+
+            //associate the memory with the buffer 
+            /* 
+            Since this memory is allocated specifically for this the vertex buffer, the offset is simply 0. 
+            If the offset is non-zero, then it is required to be divisible by memRequirements.alignment.
+            */
+            vkBindBufferMemory(device, vertexBuffer, vertexBufferMemory, 0);
+
+            //copy the vertex data to the buffer
+            void* data;
+            //access a region of the specified memory resource defined by an offset and size
+            vkMapMemory(device, vertexBufferMemory, 0, bufferInfo.size, 0, &data);
+            //memcpy the vertex data to the mapped memory and unmap it again using vkUnmapMemory
+            memcpy(data, vertices.data(), (size_t) bufferInfo.size);
+            vkUnmapMemory(device, vertexBufferMemory);
+
+            /* 
+            The driver may not immediately copy the data into the buffer memory, 
+            for example because of caching. It is also possible that writes to the 
+            buffer are not visible in the mapped memory yet. To resolve that,
+            use a memory heap that is host coherent, indicated with VK_MEMORY_PROPERTY_HOST_COHERENT_BIT
+            */
+        }
+
+        /*
+        Graphics cards can offer different types of memory to allocate from.
+        We need to combine the requirements of the buffer and our own application 
+        requirements to find the right type of memory to use*/
+        uint32_t findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties) {
+            VkPhysicalDeviceMemoryProperties memProperties;
+            //query info about the available types of memory
+            vkGetPhysicalDeviceMemoryProperties(physicalDevice, &memProperties);
+            /* 
+            Memory heaps are distinct memory resources like dedicated VRAM and swap space 
+            in RAM for when VRAM runs out. The different types of memory exist within these heaps
+            */
+            for (uint32_t i = 0; i < memProperties.memoryTypeCount; i++) {
+                /*
+                we can find the index of a suitable memory type by simply iterating over 
+                them and checking if the corresponding bit is set to 
+                
+                We also need to be able to write our vertex data to that memory. VkMemoryType structures in 
+                memProperties specify heap and properties for each type of memory. One of the property is if 
+                the memory can be mapped, so we can write to it from the cpu. Since we need to write 
+                vertex buffer in this memory, we need to check for that property too.
+                */
+                if ((typeFilter & (1 << i)) && (memProperties.memoryTypes[i].propertyFlags & properties) == properties) {
+                        return i;
+                }
+            }
+            throw std::runtime_error("failed to find suitable memory type!");
 
         }
 
@@ -467,8 +528,12 @@ class Viewer {
                 */
                 vkCmdBeginRenderPass(commandBuffers[i], &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
                 vkCmdBindPipeline(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
+                VkBuffer vertexBuffers[] = {vertexBuffer};
+                VkDeviceSize offsets[] = {0};
+                //binding the vertex buffer during rendering operations
+                vkCmdBindVertexBuffers(commandBuffers[i], 0, 1, vertexBuffers, offsets);
                 // vertexCount, instanceCount, firstVertex(offset into the vertex buffer), firstInstance( offset for instanced rendering)
-                vkCmdDraw(commandBuffers[i], 3, 1, 0, 0);
+                vkCmdDraw(commandBuffers[i], static_cast<uint32_t>(vertices.size()), 1, 0, 0);
                 vkCmdEndRenderPass(commandBuffers[i]);
 
                 if (vkEndCommandBuffer(commandBuffers[i]) != VK_SUCCESS) {
