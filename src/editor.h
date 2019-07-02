@@ -244,6 +244,10 @@ class Viewer {
         std::vector<VkBuffer> uniformBuffers;
         std::vector<VkDeviceMemory> uniformBuffersMemory;
 
+        VkDescriptorPool descriptorPool;
+        //hold the descriptor set handles
+        std::vector<VkDescriptorSet> descriptorSets;
+
         void initWindow() {
             glfwInit();
             glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
@@ -274,6 +278,8 @@ class Viewer {
             createVertexBuffer();
             createIndexBuffer();
             createUniformBuffers();
+            createDescriptorPool();
+            createDescriptorSets();
             createCommandBuffers();
             createSyncObjects();
         }
@@ -326,6 +332,25 @@ class Viewer {
 
             for (size_t i = 0; i < swapChainImages.size(); i++) {
                 createBuffer(bufferSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, uniformBuffers[i], uniformBuffersMemory[i]);
+            }
+        }
+
+        //Descriptor sets can't be created directly, they must be allocated from a pool like command buffers
+        void createDescriptorPool() {
+            //describe which descriptor types our descriptor sets are going to contain and how many of them
+            VkDescriptorPoolSize poolSize = {};
+            poolSize.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+            poolSize.descriptorCount = static_cast<uint32_t>(swapChainImages.size());
+
+            VkDescriptorPoolCreateInfo poolInfo = {};
+            poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+            poolInfo.poolSizeCount = 1;
+            poolInfo.pPoolSizes = &poolSize;
+            //specify the maximum number of descriptor sets that may be allocated
+            poolInfo.maxSets = static_cast<uint32_t>(swapChainImages.size());;
+
+            if (vkCreateDescriptorPool(device, &poolInfo, nullptr, &descriptorPool) != VK_SUCCESS) {
+                throw std::runtime_error("failed to create descriptor pool!");
             }
         }
 
@@ -716,6 +741,15 @@ class Viewer {
                 vkCmdBindIndexBuffer(commandBuffers[i], indexBuffer, 0, VK_INDEX_TYPE_UINT16);
                 // vertexCount, instanceCount, firstVertex(offset into the vertex buffer), firstInstance( offset for instanced rendering)
                 vkCmdDraw(commandBuffers[i], static_cast<uint32_t>(vertices.size()), 1, 0, 0);
+                /* 
+                - Descriptor sets are not unique to graphics pipelines. Therefore we need to specify if we 
+                want to bind descriptor sets to the graphics or compute pipeline
+                - layout that the descriptors are based on
+                - index of the first descriptor set
+                - number of sets to bind
+                - array of sets to bind
+                */
+                vkCmdBindDescriptorSets(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &descriptorSets[i], 0, nullptr);
                 vkCmdDrawIndexed(commandBuffers[i], static_cast<uint32_t>(indices.size()), 1, 0, 0, 0);
                 vkCmdEndRenderPass(commandBuffers[i]);
 
@@ -922,7 +956,7 @@ class Viewer {
             // the viewer and renders those while discarding all the faces
             rasterizer.cullMode = VK_CULL_MODE_BACK_BIT;
             //the vertex order for faces to be considered front-facing and can be clockwise or counterclockwise
-            rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE;
+            rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
             rasterizer.depthBiasEnable = VK_FALSE;
             rasterizer.depthBiasConstantFactor = 0.0f; // Optional
             rasterizer.depthBiasClamp = 0.0f; // Optional
@@ -1105,6 +1139,7 @@ class Viewer {
                 vkDestroyBuffer(device, uniformBuffers[i], nullptr);
                 vkFreeMemory(device, uniformBuffersMemory[i], nullptr);
             }
+            vkDestroyDescriptorPool(device, descriptorPool, nullptr);
 
         }
 
@@ -1130,7 +1165,64 @@ class Viewer {
             createGraphicsPipeline();
             createFramebuffers();
             createUniformBuffers();
+            createDescriptorPool();
+            createDescriptorSets();
             createCommandBuffers();
+        }
+
+        void createDescriptorSets() {
+
+            /*  
+            specify the descriptor pool to allocate from, the number of descriptor sets to allocate, 
+            and the descriptor layout to base them on
+            */
+            //we will create one descriptor set for each swap chain image, all with the same layout. 
+            std::vector<VkDescriptorSetLayout> layouts(swapChainImages.size(), descriptorSetLayout);
+            VkDescriptorSetAllocateInfo allocInfo = {};
+            allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+            allocInfo.descriptorPool = descriptorPool;
+            allocInfo.descriptorSetCount = static_cast<uint32_t>(swapChainImages.size());
+            allocInfo.pSetLayouts = layouts.data();
+
+            descriptorSets.resize(swapChainImages.size());
+            
+            //You don't need to explicitly clean up descriptor sets, because they will be automatically 
+            //freed when the descriptor pool is destroyed
+            if (vkAllocateDescriptorSets(device, &allocInfo, descriptorSets.data()) != VK_SUCCESS) {
+                throw std::runtime_error("failed to allocate descriptor sets!");
+            }
+            /* The descriptor sets have been allocated now, but the descriptors 
+            within still need to be configured*/
+
+            for (size_t i = 0; i < swapChainImages.size(); i++) {
+                VkDescriptorBufferInfo bufferInfo = {};
+                bufferInfo.buffer = uniformBuffers[i];
+                bufferInfo.offset = 0;
+                bufferInfo.range = sizeof(UniformBufferObject);
+
+                VkWriteDescriptorSet descriptorWrite = {};
+
+                descriptorWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+                //The first two fields specify the descriptor set to update and the binding
+                descriptorWrite.dstSet = descriptorSets[i];
+                descriptorWrite.dstBinding = 0;
+                /* We need to specify the type of descriptor again. It's possible 
+                to update multiple descriptors at once in an array, starting at 
+                index dstArrayElement. The descriptorCount field specifies how 
+                many array elements you want to update. */
+                descriptorWrite.dstArrayElement = 0;
+
+                descriptorWrite.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+                //It depends on the type of descriptor which one of the three you actually need to use
+                descriptorWrite.descriptorCount = 1;
+                //is used for descriptors that refer to buffer data
+                descriptorWrite.pBufferInfo = &bufferInfo;
+
+                vkUpdateDescriptorSets(device, 1, &descriptorWrite, 0, nullptr);
+
+
+            }
+
         }
 
         void createSwapChain() {

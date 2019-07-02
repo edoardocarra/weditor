@@ -34,6 +34,8 @@
         "optional": "cpp",
         "string_view": "cpp",
         "system_error": "cpp",
-        "chrono": "cpp"
+        "chrono": "cpp",
+        "ctime": "cpp",
+        "ratio": "cpp"
     }
 }
