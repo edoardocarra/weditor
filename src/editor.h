@@ -2,12 +2,14 @@
 #define EDITOR_H
 
 #define GLFW_INCLUDE_VULKAN
+#define GLM_FORCE_RADIANS
 
 #define WIDTH 800
 #define HEIGHT 600
 
 #include "GLFW/glfw3.h"
 #include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
 #include <iostream>
 #include <stdio.h>
 #include <stdexcept>
@@ -19,6 +21,7 @@
 #include <set>
 #include <fstream>
 #include <array>
+#include <chrono>
 
 struct Vertex {
     glm::vec2 pos;
@@ -52,6 +55,13 @@ struct Vertex {
         return attributeDescriptions;
     }
 
+};
+
+//descriptor
+struct UniformBufferObject {
+    glm::mat4 model;
+    glm::mat4 view;
+    glm::mat4 proj;
 };
 
 const std::vector<Vertex> vertices = {
@@ -179,6 +189,8 @@ class Viewer {
         // It describes how to access the image and which part of the image to access
         std::vector<VkImageView> swapChainImageViews;
 
+        //All of the descriptor bindings are combined into this object
+        VkDescriptorSetLayout descriptorSetLayout;
         /* if we want to change the behaviour of the shader at drawing time without recreating it, we can user 
         uniform values in the shader. Those uniforms are used to pass the transformation matrix
         in the vertex shader, or to create texture samples in the fragment shader. 
@@ -222,6 +234,16 @@ class Viewer {
         VkBuffer indexBuffer;
         VkDeviceMemory indexBufferMemory;
 
+        //buffer that contains the UBO data for the shader
+
+        /* 
+        copy new data to the uniform buffer every frame, so it doesn't really make 
+        any sense to have a staging buffer. It would just add extra overhead in this 
+        case and likely degrade performance instead of improving it.
+         */
+        std::vector<VkBuffer> uniformBuffers;
+        std::vector<VkDeviceMemory> uniformBuffersMemory;
+
         void initWindow() {
             glfwInit();
             glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
@@ -243,12 +265,15 @@ class Viewer {
             createSwapChain();
             createImageViews();
             createRenderPass();
+            //We need to provide details about every descriptor binding used in the shaders for pipeline creation
+            createDescriptorSetLayout();
             createGraphicsPipeline();
             createFramebuffers();
             createCommandPool();
             // buffers do not automatically allocate memory for themselves. We must do that by our own
             createVertexBuffer();
             createIndexBuffer();
+            createUniformBuffers();
             createCommandBuffers();
             createSyncObjects();
         }
@@ -263,6 +288,7 @@ class Viewer {
         void cleanUp() {
             cleanupSwapChain();
 
+            vkDestroyDescriptorSetLayout(device, descriptorSetLayout, nullptr);
             vkDestroyBuffer(device, indexBuffer, nullptr);
             vkFreeMemory(device, indexBufferMemory, nullptr);
 
@@ -289,6 +315,44 @@ class Viewer {
             glfwDestroyWindow(window);
 
             glfwTerminate();
+        }
+
+        //updates the uniform buffer with a new transformation every frame
+        void createUniformBuffers() {
+            VkDeviceSize bufferSize = sizeof(UniformBufferObject);
+
+            uniformBuffers.resize(swapChainImages.size());
+            uniformBuffersMemory.resize(swapChainImages.size());
+
+            for (size_t i = 0; i < swapChainImages.size(); i++) {
+                createBuffer(bufferSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, uniformBuffers[i], uniformBuffersMemory[i]);
+            }
+        }
+
+        //We need to provide details about every descriptor binding used in the shaders for pipeline creation, as we did for 
+        //location index
+        void createDescriptorSetLayout() {
+            VkDescriptorSetLayoutBinding uboLayoutBinding = {};
+            //binding used in the shader and the type of descriptor, which is a uniform buffer object
+            uboLayoutBinding.binding = 0;
+            uboLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+            uboLayoutBinding.descriptorCount = 1;
+            //in which shader stages the descriptor is going to be referenced
+            uboLayoutBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+            //image sampling related descriptors
+            uboLayoutBinding.pImmutableSamplers = nullptr;
+
+            //create the VkDescriptorSetLayout object for descriptor bindings
+            VkDescriptorSetLayoutCreateInfo layoutInfo = {};
+            layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+            layoutInfo.bindingCount = 1;
+            layoutInfo.pBindings = &uboLayoutBinding;
+
+            if (vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr, &descriptorSetLayout) != VK_SUCCESS) {
+                throw std::runtime_error("failed to create descriptor set layout!");
+            }
+
+
         }
 
         void createIndexBuffer() {
@@ -519,6 +583,8 @@ class Viewer {
                 throw std::runtime_error("failed to acquire swap chain image!");
             }
 
+            updateUniformBuffer(imageIndex);
+
             //Queue submission and synchronization 
             VkSubmitInfo submitInfo = {};
             submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
@@ -580,6 +646,24 @@ class Viewer {
             // with the modulo operator we ensure that the frame index loops around after every MAX_FRAMES_IN_FLIGHT enqueued frames.
             currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
 
+        }
+
+        //This function will generate a new transformation every frame to make the geometry spin around
+        void updateUniformBuffer(uint32_t currentImage) {
+            static auto startTime = std::chrono::high_resolution_clock::now();
+
+            auto currentTime = std::chrono::high_resolution_clock::now();
+            float time = std::chrono::duration<float, std::chrono::seconds::period>(currentTime - startTime).count();
+        
+            UniformBufferObject ubo = {};
+            ubo.model = glm::rotate(glm::mat4(1.0f), time * glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+            ubo.view = glm::lookAt(glm::vec3(2.0f, 2.0f, 2.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+            ubo.proj = glm::perspective(glm::radians(45.0f), swapChainExtent.width / (float) swapChainExtent.height, 0.1f, 10.0f);
+        
+            void* data;
+            vkMapMemory(device, uniformBuffersMemory[currentImage], 0, sizeof(ubo), 0, &data);
+            memcpy(data, &ubo, sizeof(ubo));
+            vkUnmapMemory(device, uniformBuffersMemory[currentImage]);
         }
 
         void createCommandBuffers() {
@@ -908,10 +992,8 @@ class Viewer {
             which are another way of passing dynamic values to shaders */
             VkPipelineLayoutCreateInfo pipelineLayoutInfo = {};
             pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-            pipelineLayoutInfo.setLayoutCount = 0; // Optional
-            pipelineLayoutInfo.pSetLayouts = nullptr; // Optional
-            pipelineLayoutInfo.pushConstantRangeCount = 0; // Optional
-            pipelineLayoutInfo.pPushConstantRanges = nullptr; // Optional
+            pipelineLayoutInfo.setLayoutCount = 1; 
+            pipelineLayoutInfo.pSetLayouts = &descriptorSetLayout;
 
             if (vkCreatePipelineLayout(device, &pipelineLayoutInfo, nullptr, &pipelineLayout) != VK_SUCCESS) {
                 throw std::runtime_error("failed to create pipeline layout!");
@@ -1014,6 +1096,15 @@ class Viewer {
             }
 
             vkDestroySwapchainKHR(device, swapChain, nullptr);
+            
+            /* 
+            Since the uniform buffer also depends on the number of swap chain 
+            images, which could change after a recreation, we clean it up here
+            */
+            for (size_t i = 0; i < swapChainImages.size(); i++) {
+                vkDestroyBuffer(device, uniformBuffers[i], nullptr);
+                vkFreeMemory(device, uniformBuffersMemory[i], nullptr);
+            }
 
         }
 
@@ -1038,6 +1129,7 @@ class Viewer {
             createRenderPass();
             createGraphicsPipeline();
             createFramebuffers();
+            createUniformBuffers();
             createCommandBuffers();
         }
 
