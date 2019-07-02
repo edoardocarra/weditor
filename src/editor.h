@@ -57,6 +57,12 @@ struct Vertex {
 
 };
 
+struct Camera {
+    glm::vec3 position = glm::vec3(2.0f, 2.0f, 2.0f);
+    glm::vec3 front = glm::vec3(0.0f, 0.0f, 0.0f);
+    glm::vec3 up = glm::vec3(0.0f, 0.0f, 1.0f);
+};
+
 //descriptor
 struct UniformBufferObject {
     alignas(16) glm::mat4 model;
@@ -248,6 +254,9 @@ class Viewer {
         //hold the descriptor set handles
         std::vector<VkDescriptorSet> descriptorSets;
 
+        //camera features
+        Camera camera;
+
         void initWindow() {
             glfwInit();
             glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
@@ -284,7 +293,22 @@ class Viewer {
             createSyncObjects();
         }
         void mainLoop() {
+            glm::vec2 mouse_pos{0,0};
+            glm::vec2 last_pos{0,0};
+            float pitch = 0;
+            float yaw = 0;
             while(!glfwWindowShouldClose(window)) {
+                last_pos = mouse_pos;
+                mouse_pos = get_mouse_position(window);
+                int mouse_left = is_mouse_left(window);
+                if(mouse_left) {
+                    glm::vec2 rotate = glm::vec2(mouse_pos.x-last_pos.x,last_pos.y-mouse_pos.y) / 10.0f;
+                    if(rotate != glm::vec2(0,0)) {
+                        yaw += rotate.x;
+                        pitch += rotate.y;
+                        updateCamera(camera,pitch,yaw);
+                    }
+                }
                 glfwPollEvents();
                 drawFrame();
             }
@@ -321,6 +345,29 @@ class Viewer {
             glfwDestroyWindow(window);
 
             glfwTerminate();
+        }
+
+        //camera update
+        void updateCamera(Camera& camera, float pitch, float yaw) {
+            glm::vec3 front;
+            front.x = cos(glm::radians(yaw)) * cos(glm::radians(pitch));
+            front.y = sin(glm::radians(pitch));
+            front.z = sin(glm::radians(yaw)) * cos(glm::radians(pitch));
+            camera.front = glm::normalize(front);
+        }
+
+        //MOUSE MOVEMENT
+        int is_mouse_left(GLFWwindow* window) {
+            return glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS;
+        }
+
+        glm::vec2 get_mouse_position(GLFWwindow* window) {
+
+            double mousex, mousey;
+            glfwGetCursorPos(window, &mousex, &mousey);
+            glm::vec2 pos{(float)mousex, (float)mousey};
+            return pos;
+
         }
 
         //updates the uniform buffer with a new transformation every frame
@@ -681,8 +728,8 @@ class Viewer {
             float time = std::chrono::duration<float, std::chrono::seconds::period>(currentTime - startTime).count();
 
             UniformBufferObject ubo = {};
-            ubo.model = glm::rotate(glm::mat4(1.0f), time * glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f));
-            ubo.view = glm::lookAt(glm::vec3(2.0f, 2.0f, 2.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+            ubo.model = glm::rotate(glm::mat4(1.0f), glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+            ubo.view = glm::lookAt(camera.position, camera.position * camera.front, camera.up);
             ubo.proj = glm::perspective(glm::radians(45.0f), swapChainExtent.width / (float) swapChainExtent.height, 0.1f, 10.0f);
             ubo.proj[1][1] *= -1;
 
