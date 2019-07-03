@@ -6,6 +6,7 @@
             "type": "shell",
             "command": "g++",
             "args": [
+                "-O3",
                 "-std=c++17",
                 "./src/editor.cpp",
                 "-o Editor.exe",
