@@ -37,6 +37,7 @@
         "chrono": "cpp",
         "ctime": "cpp",
         "ratio": "cpp",
-        "deque": "cpp"
+        "deque": "cpp",
+        "numeric": "cpp"
     }
 }
