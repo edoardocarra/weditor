@@ -88,19 +88,20 @@ struct UniformBufferObject {
 };
 
 const std::vector<Vertex> vertices = {
-    {{-0.5f, -0.5f, 0.0f}, {1.0f, 0.0f, 0.0f}, {0.0f, 0.0f}},
-    {{0.5f, -0.5f, 0.0f}, {0.0f, 1.0f, 0.0f}, {1.0f, 0.0f}},
-    {{0.5f, 0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}, {1.0f, 1.0f}},
-    {{-0.5f, 0.5f, 0.0f}, {1.0f, 1.0f, 1.0f}, {0.0f, 1.0f}},
+    {{-0.5f, -0.5f, 0.0f}, {1.0f, 0.0f, 0.0f}, {1.0f, 0.0f}},
+    {{0.5f, -0.5f, 0.0f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f}},
+    {{0.5f, 0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f}},
+    {{-0.5f, 0.5f, 0.0f}, {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f}},
 
-    {{-0.5f, -0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}, {0.0f, 0.0f}},
-    {{0.5f, -0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}, {1.0f, 0.0f}},
-    {{0.5f, 0.5f, -0.5f}, {0.0f, 0.0f, 1.0f}, {1.0f, 1.0f}},
-    {{-0.5f, 0.5f, -0.5f}, {1.0f, 1.0f, 1.0f}, {0.0f, 1.0f}}
+    {{-0.5f, -0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}, {1.0f, 0.0f}},
+    {{0.5f, -0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f}},
+    {{0.5f, 0.5f, -0.5f}, {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f}},
+    {{-0.5f, 0.5f, -0.5f}, {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f}}
 };
 
 const std::vector<uint16_t> indices = {
-    0, 1, 2, 2, 3, 0, 4, 5, 6, 6, 7, 4
+    0, 1, 2, 2, 3, 0,
+    4, 5, 6, 6, 7, 4
 };
 
 /* The stages that the current frame has already progressed through are idle 
@@ -316,11 +317,12 @@ class Viewer {
             //We need to provide details about every descriptor binding used in the shaders for pipeline creation
             createDescriptorSetLayout();
             createGraphicsPipeline();
-            createFramebuffers();
             createCommandPool();
             createDepthResources();
+            createFramebuffers();
             createTextureImage();
             createTextureImageView();
+            createTextureSampler();
             // buffers do not automatically allocate memory for themselves. We must do that by our own
             createVertexBuffer();
             createIndexBuffer();
@@ -449,7 +451,7 @@ class Viewer {
             }
         }
 
-        VkImageView createImageView(VkImage image, VkFormat format) {
+        VkImageView createImageView(VkImage image, VkFormat format, VkImageAspectFlags aspectFlags) {
             VkImageViewCreateInfo viewInfo = {};
             viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
             viewInfo.image = image;
@@ -457,7 +459,7 @@ class Viewer {
             viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
             viewInfo.format = format;
             //What the image's purpose is and which part of the image should be accessed
-            viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+            viewInfo.subresourceRange.aspectMask = aspectFlags;
             viewInfo.subresourceRange.baseMipLevel = 0;
             viewInfo.subresourceRange.levelCount = 1;
             viewInfo.subresourceRange.baseArrayLayer = 0;
@@ -473,7 +475,7 @@ class Viewer {
 
         void createTextureImageView() {
 
-            textureImageView = createImageView(textureImage, VK_FORMAT_R8G8B8A8_UNORM);
+            textureImageView = createImageView(textureImage, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_ASPECT_COLOR_BIT);
 
         }
 
@@ -567,8 +569,14 @@ class Viewer {
                 barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
                 barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
 
-                sourceStage = VK_PIPELINE_STAGE_TRANSFER_BIT; //The image will be written in the same pipeline stage
-                destinationStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT; // subsequently read by the fragment shader
+                sourceStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+                destinationStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+            } else if (oldLayout == VK_IMAGE_LAYOUT_UNDEFINED && newLayout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL) {
+                barrier.srcAccessMask = 0;
+                barrier.dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+
+                sourceStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+                destinationStage = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
             } else {
                 throw std::invalid_argument("unsupported layout transition!");
             }
@@ -708,10 +716,12 @@ class Viewer {
 
             VkFormat depthFormat = findDepthFormat();
 
-/*             createImage(swapChainExtent.width, swapChainExtent.height, depthFormat, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, depthImage, depthImageMemory);
+            createImage(swapChainExtent.width, swapChainExtent.height, depthFormat, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, depthImage, depthImageMemory);
 
-            depthImageView = createImageView(depthImage, depthFormat); */
-
+            depthImageView = createImageView(depthImage, depthFormat, VK_IMAGE_ASPECT_DEPTH_BIT); 
+            //the depth image need to be transitioned to a layout that is suitable for depth attachment usage
+            // we use a pipeline barrier because the transition only needs to happen once
+            transitionImageLayout(depthImage, depthFormat, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
         }
 
         //camera update
@@ -1171,9 +1181,15 @@ class Viewer {
                 renderPassInfo.framebuffer = swapChainFramebuffers[i];
                 renderPassInfo.renderArea.offset = {0, 0};
                 renderPassInfo.renderArea.extent = swapChainExtent;
-                VkClearValue clearColor = {0.0f, 0.0f, 0.0f, 1.0f};
-                renderPassInfo.clearValueCount = 1;
-                renderPassInfo.pClearValues = &clearColor;
+                /*
+                we now have multiple attachments with VK_ATTACHMENT_LOAD_OP_CLEAR, 
+                we also need to specify multiple clear values
+                 */
+                std::array<VkClearValue, 2> clearValues = {};
+                clearValues[0].color = {0.0f, 0.0f, 0.0f, 1.0f};
+                clearValues[1].depthStencil = {1.0f, 0};
+                renderPassInfo.clearValueCount = static_cast<uint32_t>(clearValues.size());
+                renderPassInfo.pClearValues = clearValues.data();
                 /*
                 - command buffer to record the command to
                 - The details of the render pass we've just provided
@@ -1230,16 +1246,17 @@ class Viewer {
             swapChainFramebuffers.resize(swapChainImageViews.size());
             //iterate through the image views and create framebuffers from them
             for (size_t i = 0; i < swapChainImageViews.size(); i++) {
-                VkImageView attachments[] = {
-                    swapChainImageViews[i]
+                std::array<VkImageView, 2> attachments = {
+                    swapChainImageViews[i],
+                    depthImageView
                 };
 
                 VkFramebufferCreateInfo framebufferInfo = {};
                 framebufferInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
                 //specify with which renderPass the framebuffer needs to be compatible
                 framebufferInfo.renderPass = renderPass;
-                framebufferInfo.attachmentCount = 1;
-                framebufferInfo.pAttachments = attachments;
+                framebufferInfo.attachmentCount = static_cast<uint32_t>(attachments.size());
+                framebufferInfo.pAttachments = attachments.data();
                 framebufferInfo.width = swapChainExtent.width;
                 framebufferInfo.height = swapChainExtent.height;
                 framebufferInfo.layers = 1;
@@ -1280,6 +1297,22 @@ class Viewer {
             //which layout we would like the attachment to have during a subpass that uses this reference.
             colorAttachmentRef.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
 
+            VkAttachmentDescription depthAttachment = {};
+            //The format should be the same as the depth image itself
+            depthAttachment.format = findDepthFormat();
+            depthAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
+            depthAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+            //we don't care about storing the depth data (storeOp), because it will not be used after drawing has finished (this allow hardware optimization)
+            depthAttachment.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+            depthAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+            depthAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+            depthAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+            depthAttachment.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+
+            VkAttachmentReference depthAttachmentRef = {};
+            depthAttachmentRef.attachment = 1;
+            depthAttachmentRef.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+
             //subpass definition
             VkSubpassDescription subpass = {};
             subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
@@ -1288,6 +1321,8 @@ class Viewer {
             //The index of the attachment in this array is directly referenced from the fragment 
             //shader with the layout(location = 0) out vec4 outColor directive!
             subpass.pColorAttachments = &colorAttachmentRef;
+            // a subpass can only use a single depth (+stencil) attachment
+            subpass.pDepthStencilAttachment = &depthAttachmentRef;
 
 /*          The subpasses in a render pass automatically take care of image layout transitions. 
             These transitions are controlled by subpass dependencies, which specify memory and 
@@ -1305,14 +1340,16 @@ class Viewer {
             dependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
             dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
 
+            std::array<VkAttachmentDescription, 2> attachments = {colorAttachment, depthAttachment};
             VkRenderPassCreateInfo renderPassInfo = {};
             renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
-            renderPassInfo.attachmentCount = 1;
-            renderPassInfo.pAttachments = &colorAttachment;
+            renderPassInfo.attachmentCount = static_cast<uint32_t>(attachments.size());
+            renderPassInfo.pAttachments = attachments.data();
             renderPassInfo.subpassCount = 1;
             renderPassInfo.pSubpasses = &subpass;
             renderPassInfo.dependencyCount = 1;
             renderPassInfo.pDependencies = &dependency;
+
 
             if (vkCreateRenderPass(device, &renderPassInfo, nullptr, &renderPass) != VK_SUCCESS) {
                 throw std::runtime_error("failed to create render pass!");
@@ -1425,6 +1462,25 @@ class Viewer {
             multisampling.alphaToCoverageEnable = VK_FALSE; // Optional
             multisampling.alphaToOneEnable = VK_FALSE; // Optional
 
+
+            VkPipelineDepthStencilStateCreateInfo depthStencil = {};
+            depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+            //specifies if the depth of new fragments should be compared to the depth buffer to see if they should be discarded
+            depthStencil.depthTestEnable = VK_TRUE;
+            //specifies if the new depth of fragments that pass the depth test should actually be written to the depth buffer. 
+            //This is useful for drawing transparent object
+            depthStencil.depthWriteEnable = VK_TRUE;
+            //specifies the comparison that is performed to keep or discard fragments -  lower depth = closer
+            depthStencil.depthCompareOp = VK_COMPARE_OP_LESS;
+            //this test allows you to only keep fragments that fall within the specified depth range
+            depthStencil.depthBoundsTestEnable = VK_FALSE;
+            depthStencil.minDepthBounds = 0.0f; // Optional
+            depthStencil.maxDepthBounds = 1.0f; // Optional
+            // stencil buffer operations
+            depthStencil.stencilTestEnable = VK_FALSE;
+            depthStencil.front = {}; // Optional
+            depthStencil.back = {}; // Optional
+
             /* After a fragment shader has returned a color, it needs to be combined with 
             the color that is already in the framebuffer. */
 /*             The most common way to use color blending is to implement alpha blending, 
@@ -1497,7 +1553,7 @@ class Viewer {
             pipelineInfo.pViewportState = &viewportState;
             pipelineInfo.pRasterizationState = &rasterizer;
             pipelineInfo.pMultisampleState = &multisampling;
-            pipelineInfo.pDepthStencilState = nullptr; // Optional
+            pipelineInfo.pDepthStencilState = &depthStencil;
             pipelineInfo.pColorBlendState = &colorBlending;
             pipelineInfo.pDynamicState = nullptr; // Optional
 
@@ -1536,7 +1592,7 @@ class Viewer {
             // resize the list to fit all of the image views we'll be creating
             swapChainImageViews.resize(swapChainImages.size());
             for (uint32_t i = 0; i < swapChainImages.size(); i++) {
-                swapChainImageViews[i] = createImageView(swapChainImages[i], swapChainImageFormat);
+                swapChainImageViews[i] = createImageView(swapChainImages[i], swapChainImageFormat, VK_IMAGE_ASPECT_COLOR_BIT);
             }
         }
 
