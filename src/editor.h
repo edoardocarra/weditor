@@ -4,6 +4,16 @@
 #define GLFW_INCLUDE_VULKAN
 #define GLM_FORCE_RADIANS
 
+/*
+the problem of ordering fragments by depth is much more commonly solved using a depth buffer. 
+A depth buffer is an additional attachment that stores the depth for every position.
+Every time the rasterizer produces a fragment, the depth test will 
+check if the new fragment is closer than the previous one
+ */
+#define GLM_FORCE_DEPTH_ZERO_TO_ONE
+
+#define STB_IMAGE_IMPLEMENTATION
+
 #define WIDTH 800
 #define HEIGHT 600
 
@@ -22,10 +32,12 @@
 #include <fstream>
 #include <array>
 #include <chrono>
+#include <stb_image.h>
 
 struct Vertex {
-    glm::vec2 pos;
+    glm::vec3 pos;
     glm::vec3 color;
+    glm::vec2 texcoord;
     
     //A vertex binding describes at which rate to load data from memory throughout the vertices
     static VkVertexInputBindingDescription getBindingDescription() {
@@ -44,7 +56,7 @@ struct Vertex {
         //position attribute
         attributeDescriptions[0].binding = 0;
         attributeDescriptions[0].location = 0;
-        attributeDescriptions[0].format = VK_FORMAT_R32G32_SFLOAT;
+        attributeDescriptions[0].format = VK_FORMAT_R32G32B32_SFLOAT;
         attributeDescriptions[0].offset = offsetof(Vertex, pos);
         //color attribute
         attributeDescriptions[1].binding = 0;
@@ -71,14 +83,19 @@ struct UniformBufferObject {
 };
 
 const std::vector<Vertex> vertices = {
-    {{-0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}},
-    {{0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}},
-    {{0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}},
-    {{-0.5f, 0.5f}, {1.0f, 1.0f, 1.0f}}
+    {{-0.5f, -0.5f, 0.0f}, {1.0f, 0.0f, 0.0f}, {0.0f, 0.0f}},
+    {{0.5f, -0.5f, 0.0f}, {0.0f, 1.0f, 0.0f}, {1.0f, 0.0f}},
+    {{0.5f, 0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}, {1.0f, 1.0f}},
+    {{-0.5f, 0.5f, 0.0f}, {1.0f, 1.0f, 1.0f}, {0.0f, 1.0f}},
+
+    {{-0.5f, -0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}, {0.0f, 0.0f}},
+    {{0.5f, -0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}, {1.0f, 0.0f}},
+    {{0.5f, 0.5f, -0.5f}, {0.0f, 0.0f, 1.0f}, {1.0f, 1.0f}},
+    {{-0.5f, 0.5f, -0.5f}, {1.0f, 1.0f, 1.0f}, {0.0f, 1.0f}}
 };
 
 const std::vector<uint16_t> indices = {
-    0, 1, 2, 2, 3, 0
+    0, 1, 2, 2, 3, 0, 4, 5, 6, 6, 7, 4
 };
 
 /* The stages that the current frame has already progressed through are idle 
@@ -254,8 +271,16 @@ class Viewer {
         //hold the descriptor set handles
         std::vector<VkDescriptorSet> descriptorSets;
 
+        //We only need a single depth image, because only one draw operation is running at once
+        VkImage depthImage;
+        VkDeviceMemory depthImageMemory;
+        VkImageView depthImageView;
+
         //camera features
         Camera camera;
+
+        VkImage textureImage;
+        VkDeviceMemory textureImageMemory;
 
         void initWindow() {
             glfwInit();
@@ -283,6 +308,8 @@ class Viewer {
             createGraphicsPipeline();
             createFramebuffers();
             createCommandPool();
+            createDepthResources();
+            createTextureImage();
             // buffers do not automatically allocate memory for themselves. We must do that by our own
             createVertexBuffer();
             createIndexBuffer();
@@ -344,6 +371,98 @@ class Viewer {
             glfwDestroyWindow(window);
 
             glfwTerminate();
+        }
+
+        void createTextureImage() {
+            int texWidth, texHeight, texChannels;
+            stbi_uc* pixels = stbi_load("textures/texture.jpg", &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
+            VkDeviceSize imageSize = texWidth * texHeight * 4;
+
+            if (!pixels) {
+                throw std::runtime_error("failed to load texture image!");
+            }
+
+            VkBuffer stagingBuffer;
+            VkDeviceMemory stagingBufferMemory;
+
+            createBuffer(imageSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, stagingBufferMemory);
+
+            //copy the pixel values that we got from the image loading library to the buffer
+            void* data;
+            vkMapMemory(device, stagingBufferMemory, 0, imageSize, 0, &data);
+            memcpy(data, pixels, static_cast<size_t>(imageSize));
+            vkUnmapMemory(device, stagingBufferMemory);
+
+            stbi_image_free(pixels);
+
+            VkImageCreateInfo imageInfo = {};
+            imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+            imageInfo.imageType = VK_IMAGE_TYPE_2D;
+            imageInfo.extent.width = static_cast<uint32_t>(texWidth);
+            imageInfo.extent.height = static_cast<uint32_t>(texHeight);
+            imageInfo.extent.depth = 1;
+            imageInfo.mipLevels = 1;
+            imageInfo.arrayLayers = 1;
+            imageInfo.format = VK_FORMAT_R8G8B8A8_UNORM;
+            imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL; //Texels are laid out in an implementation defined order for optimal access
+            imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED; //Not usable by the GPU and the very first transition will discard the texels
+            //The image is going to be used as destination for the buffer copy, so it should be set up as a transfer destination
+            //We also want to be able to access the image from the shader to color our mesh
+            imageInfo.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+            //The image will only be used by one queue family: the one that supports graphics 
+            imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+            imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+            imageInfo.flags = 0; // Optional
+        }
+
+        bool hasStencilComponent(VkFormat format) {
+            return format == VK_FORMAT_D32_SFLOAT_S8_UINT || format == VK_FORMAT_D24_UNORM_S8_UINT;
+        }
+
+        //The support of a format depends on the tiling mode and usage, so we must also include these as parameters.
+        VkFormat findSupportedFormat(const std::vector<VkFormat>& candidates, VkImageTiling tiling, VkFormatFeatureFlags features) {
+            for (VkFormat format : candidates) {
+                VkFormatProperties props;
+                vkGetPhysicalDeviceFormatProperties(physicalDevice, format, &props);
+                if (tiling == VK_IMAGE_TILING_LINEAR && (props.linearTilingFeatures & features) == features) {
+                    return format;
+                } else if (tiling == VK_IMAGE_TILING_OPTIMAL && (props.optimalTilingFeatures & features) == features) {
+                    return format;
+                }
+            }
+    
+            throw std::runtime_error("failed to find supported format!");
+
+        }
+
+        //select a format with a depth component that supports usage as depth attachment
+        VkFormat findDepthFormat() {
+            return findSupportedFormat(
+                {VK_FORMAT_D32_SFLOAT, VK_FORMAT_D32_SFLOAT_S8_UINT, VK_FORMAT_D24_UNORM_S8_UINT},
+                VK_IMAGE_TILING_OPTIMAL,
+                VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT
+            );
+        }
+
+        void createDepthResources() {
+            /*
+            A depth image should have the same resolution as the color attachment, 
+            defined by the swap chain extent, an image usage appropriate for a depth attachment, 
+            optimal tiling and device local memory. 
+            We don't necessarily need a specific format, because we won't be directly accessing 
+            the texels from the program. It just needs to have a reasonable accuracy, 
+            at least 24 bits is common in real-world applications.
+            Along with accuracy for depth test, we need also come accuracy for stencil test,
+            which is an additional test that can be combined with depth testing. We use 
+            findSupportedFormat function to search for the proper format.
+            */
+
+            VkFormat depthFormat = findDepthFormat();
+
+/*             createImage(swapChainExtent.width, swapChainExtent.height, depthFormat, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, depthImage, depthImageMemory);
+
+            depthImageView = createImageView(depthImage, depthFormat); */
+
         }
 
         //camera update
