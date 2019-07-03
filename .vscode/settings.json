@@ -36,6 +36,7 @@
         "system_error": "cpp",
         "chrono": "cpp",
         "ctime": "cpp",
-        "ratio": "cpp"
+        "ratio": "cpp",
+        "deque": "cpp"
     }
 }
