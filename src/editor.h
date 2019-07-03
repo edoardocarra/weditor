@@ -281,6 +281,11 @@ class Viewer {
 
         VkImage textureImage;
         VkDeviceMemory textureImageMemory;
+        /* images are accessed through image views rather than directly
+         we need to create such an image view for the texture image too */
+        VkImageView textureImageView;
+
+        VkSampler textureSampler;
 
         void initWindow() {
             glfwInit();
@@ -310,6 +315,7 @@ class Viewer {
             createCommandPool();
             createDepthResources();
             createTextureImage();
+            createTextureImageView();
             // buffers do not automatically allocate memory for themselves. We must do that by our own
             createVertexBuffer();
             createIndexBuffer();
@@ -344,6 +350,8 @@ class Viewer {
         void cleanUp() {
             cleanupSwapChain();
 
+            vkDestroySampler(device, textureSampler, nullptr);
+            vkDestroyImageView(device, textureImageView, nullptr);
             vkDestroyImage(device, textureImage, nullptr);
             vkFreeMemory(device, textureImageMemory, nullptr);
 
@@ -374,6 +382,94 @@ class Viewer {
             glfwDestroyWindow(window);
 
             glfwTerminate();
+        }
+
+        /*
+        Textures are usually accessed through samplers, which will apply filtering 
+        and transformations to compute the final color that is retrieved.
+        These filters are helpful to deal with problems like oversampling:
+
+        - a texture that is mapped to geometry with more fragments than texels, so
+          you simply took the closest texel for the texture coordinate in each fragment, and 
+          you will have a minecraft style result 
+
+        Oversampling is the opposite problem: you have more texels than fragments
+        This will lead to artifacts when sampling high frequency patterns (like checkerboard texture)
+
+        sampler can also take care of transformations.  It determines what happens when you try 
+        to read texels outside the image through its addressing mode
+         
+        */
+        void createTextureSampler() {
+            //structure which specifies all filters and transformations that it should apply.
+            VkSamplerCreateInfo samplerInfo = {};
+            samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+            //how to interpolate texels that are magnified or minified
+            /*
+            Magnification concerns the oversampling problem describes above, 
+            and minification concerns undersampling
+             */
+            samplerInfo.magFilter = VK_FILTER_LINEAR;
+            samplerInfo.minFilter = VK_FILTER_LINEAR;
+
+            samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT; //Repeat the texture when going beyond the image dimensions
+            samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+            samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+
+            samplerInfo.anisotropyEnable = VK_TRUE; // use anisotropic filtering
+            /* limits the amount of texel samples that can be used to calculate the final color. 
+            A lower value results in better performance, but lower quality results */
+            samplerInfo.maxAnisotropy = 16; 
+            // which color is returned when sampling beyond the image with clamp to border addressing mode
+            samplerInfo.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
+            //which coordinate system you want to use to address texels in an image
+            samplerInfo.unnormalizedCoordinates = VK_FALSE;
+            
+            /*
+            If a comparison function is enabled, then texels will first be compared to a value, 
+            and the result of that comparison is used in filtering operations. 
+            This is mainly used for percentage-closer filtering on shadow maps
+             */
+            samplerInfo.compareEnable = VK_FALSE;
+            samplerInfo.compareOp = VK_COMPARE_OP_ALWAYS;
+
+            //mipmapping
+            samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+            samplerInfo.mipLodBias = 0.0f;
+            samplerInfo.minLod = 0.0f;
+            samplerInfo.maxLod = 0.0f;
+
+            if (vkCreateSampler(device, &samplerInfo, nullptr, &textureSampler) != VK_SUCCESS) {
+                throw std::runtime_error("failed to create texture sampler!");
+            }
+        }
+
+        VkImageView createImageView(VkImage image, VkFormat format) {
+            VkImageViewCreateInfo viewInfo = {};
+            viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+            viewInfo.image = image;
+            //how the image data should be interpreted
+            viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+            viewInfo.format = format;
+            //What the image's purpose is and which part of the image should be accessed
+            viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+            viewInfo.subresourceRange.baseMipLevel = 0;
+            viewInfo.subresourceRange.levelCount = 1;
+            viewInfo.subresourceRange.baseArrayLayer = 0;
+            viewInfo.subresourceRange.layerCount = 1;
+
+            VkImageView imageView;
+            if (vkCreateImageView(device, &viewInfo, nullptr, &imageView) != VK_SUCCESS) {
+                throw std::runtime_error("failed to create texture image view!");
+            }
+
+            return imageView;
+        }
+
+        void createTextureImageView() {
+
+            textureImageView = createImageView(textureImage, VK_FORMAT_R8G8B8A8_UNORM);
+
         }
 
         void copyBufferToImage(VkBuffer buffer, VkImage image, uint32_t width, uint32_t height) {
@@ -1422,30 +1518,9 @@ class Viewer {
         void createImageViews() {
             // resize the list to fit all of the image views we'll be creating
             swapChainImageViews.resize(swapChainImages.size());
-            for (size_t i = 0; i < swapChainImages.size(); i++) {
-                VkImageViewCreateInfo createInfo = {};
-                createInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-                createInfo.image = swapChainImages[i];
-                //how the image data should be interpreted
-                createInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
-                createInfo.format = swapChainImageFormat;
-                //swizzle the color channels around. Identity is default mapping
-                createInfo.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
-                createInfo.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
-                createInfo.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
-                createInfo.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
-                //What the image's purpose is and which part of the image should be accessed
-                createInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-                createInfo.subresourceRange.baseMipLevel = 0;
-                createInfo.subresourceRange.levelCount = 1;
-                createInfo.subresourceRange.baseArrayLayer = 0;
-                createInfo.subresourceRange.layerCount = 1;
-                if (vkCreateImageView(device, &createInfo, nullptr, &swapChainImageViews[i]) != VK_SUCCESS) {
-                    throw std::runtime_error("failed to create image views!");
-                }
+            for (uint32_t i = 0; i < swapChainImages.size(); i++) {
+                swapChainImageViews[i] = createImageView(swapChainImages[i], swapChainImageFormat);
             }
-
-
         }
 
         void cleanupSwapChain() {
@@ -1641,6 +1716,8 @@ class Viewer {
 
             //the set of device features that we'll be using
             VkPhysicalDeviceFeatures deviceFeatures = {};
+            //anisotropic filtering is actually an optional device feature
+            deviceFeatures.samplerAnisotropy = VK_TRUE;
 
             VkDeviceCreateInfo createInfo = {};
             createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
@@ -1699,7 +1776,11 @@ class Viewer {
                 SwapChainSupportDetails swapChainSupport = querySwapChainSupport(device);
                 swapChainAdequate = !swapChainSupport.formats.empty() && !swapChainSupport.presentModes.empty();
             }
-            return indices.isComplete() && extensionsSupported && swapChainAdequate;
+            //to check if anisotropic filtering is available
+            VkPhysicalDeviceFeatures supportedFeatures;
+            vkGetPhysicalDeviceFeatures(device, &supportedFeatures);
+            
+            return indices.isComplete() && extensionsSupported && swapChainAdequate && supportedFeatures.samplerAnisotropy;
         }
         //enumerate the extensions and check if all of the required extensions are amongst them.
         bool checkDeviceExtensionSupport(VkPhysicalDevice device) {
