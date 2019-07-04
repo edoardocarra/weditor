@@ -12,15 +12,15 @@ check if the new fragment is closer than the previous one
  */
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
 
-#define STB_IMAGE_IMPLEMENTATION
-#define TINYOBJLOADER_IMPLEMENTATION
+#define GLM_ENABLE_EXPERIMENTAL
+#include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtx/hash.hpp>
 
 #define WIDTH 800
 #define HEIGHT 600
 
 #include "GLFW/glfw3.h"
-#include <glm/glm.hpp>
-#include <glm/gtc/matrix_transform.hpp>
 #include <iostream>
 #include <stdio.h>
 #include <stdexcept>
@@ -33,11 +33,11 @@ check if the new fragment is closer than the previous one
 #include <fstream>
 #include <array>
 #include <chrono>
-#include <stb_image.h>
-#include <tiny_obj_loader.h>
+#include <unordered_map>
+#include <sstream>
 
-const std::string MODEL_PATH = "models/chalet.obj";
-const std::string TEXTURE_PATH = "textures/chalet.jpg";
+
+inline const double pi  = 3.14159265358979323846;
 
 struct Vertex {
     glm::vec3 pos;
@@ -77,12 +77,42 @@ struct Vertex {
         return attributeDescriptions;
     }
 
+    bool operator==(const Vertex& other) const {
+        return pos == other.pos && color == other.color && texCoord == other.texCoord;
+    }
+
 };
 
+struct Texture {
+    int texWidth;
+    int texHeight; 
+    int texChannels;
+    unsigned char* pixels;            
+};
+
+struct Model {
+    std::vector<Vertex> vertices;
+    std::vector<uint32_t> indices;
+    Texture txt;
+};
+
+namespace std {
+    template<> struct hash<Vertex> {
+        size_t operator()(Vertex const& vertex) const {
+            return ((hash<glm::vec3>()(vertex.pos) ^
+                   (hash<glm::vec3>()(vertex.color) << 1)) >> 1) ^
+                   (hash<glm::vec2>()(vertex.texCoord) << 1);
+        }
+    };
+}
+
 struct Camera {
-    glm::vec3 position = glm::vec3(2.0f, 2.0f, 2.0f);
-    glm::vec3 target = glm::vec3(0.0f, 0.0f, 0.0f);
-    glm::vec3 up = glm::vec3(0.0f, 0.0f, 1.0f);
+    glm::vec3 position;
+    glm::vec3 target;
+    glm::vec3 up;
+    float theta = pi/2;
+    float phi = -pi/2;
+    float distance = 4;
 };
 
 //descriptor
@@ -172,6 +202,7 @@ static std::vector<char> readFile(const std::string& filename) {
 
 class Viewer {
     public:
+        Model model;
         void run() {
             initWindow();
             initVulkan();
@@ -246,9 +277,6 @@ class Viewer {
         //member variable that flags that a resize has happened
         bool framebufferResized = false;
         
-        std::vector<Vertex> vertices;
-        std::vector<uint32_t> indices;
-
         VkBuffer vertexBuffer;
         VkDeviceMemory vertexBufferMemory;
         VkBuffer indexBuffer;
@@ -314,7 +342,6 @@ class Viewer {
             createTextureImage();
             createTextureImageView();
             createTextureSampler();
-            loadModel();
             // buffers do not automatically allocate memory for themselves. We must do that by our own
             createVertexBuffer();
             createIndexBuffer();
@@ -325,19 +352,44 @@ class Viewer {
             createSyncObjects();
         }
         void mainLoop() {
-            glm::vec2 mouse_pos;
-            glm::vec2 last_pos;
-            glm::vec2 theta_phi;
+            glm::vec2 mouse_pos = glm::vec2(0,0);
+            glm::vec2 last_pos = glm::vec2(0,0);
+            double lastTime = glfwGetTime();
+            int nbFrames = 0;
+            updateCamera(camera);
             while(!glfwWindowShouldClose(window)) {
+                double currentTime = glfwGetTime();
+                double delta = currentTime - lastTime;
+                nbFrames++;
+                if ( delta >= 1.0 ){
+
+                    double fps = double(nbFrames) / delta;
+
+                    std::stringstream ss;
+                    ss << " [" << fps << " FPS]";
+
+                    glfwSetWindowTitle(window, ss.str().c_str());
+
+                    nbFrames = 0;
+                    lastTime = currentTime;
+                }
                 last_pos = mouse_pos;
                 mouse_pos = get_mouse_position(window);
                 int mouse_left = is_mouse_left(window);
+                int mouse_right = is_mouse_right(window);
                 if(mouse_left) {
                     glm::vec2 offset = glm::vec2(mouse_pos.x-last_pos.x,mouse_pos.y-last_pos.y) / 100.0f;
                     if(offset != glm::vec2(0,0)) {
-                        theta_phi.x += offset.x;
-                        theta_phi.y += offset.y;
-                        updateCamera(camera,theta_phi);
+                        camera.theta += offset.y;
+                        camera.phi += offset.x;
+                        updateCamera(camera);
+                    }
+                }
+                if(mouse_right) {
+                    glm::vec2 offset = glm::vec2(mouse_pos.x-last_pos.x,mouse_pos.y-last_pos.y) / 100.0f;
+                    if(offset != glm::vec2(0,0)) {
+                        camera.distance += offset.x;
+                        updateCamera(camera);
                     }
                 }
                 glfwPollEvents();
@@ -346,15 +398,18 @@ class Viewer {
             //wait for the logical device to finish operations before exiting and destroy the window
             vkDeviceWaitIdle(device);
         }
+
         void cleanUp() {
             cleanupSwapChain();
 
             vkDestroySampler(device, textureSampler, nullptr);
             vkDestroyImageView(device, textureImageView, nullptr);
+
             vkDestroyImage(device, textureImage, nullptr);
             vkFreeMemory(device, textureImageMemory, nullptr);
 
             vkDestroyDescriptorSetLayout(device, descriptorSetLayout, nullptr);
+
             vkDestroyBuffer(device, indexBuffer, nullptr);
             vkFreeMemory(device, indexBufferMemory, nullptr);
 
@@ -381,39 +436,6 @@ class Viewer {
             glfwDestroyWindow(window);
 
             glfwTerminate();
-        }
-
-        void loadModel() {
-            tinyobj::attrib_t attrib;
-            std::vector<tinyobj::shape_t> shapes;
-            std::vector<tinyobj::material_t> materials;
-            std::string warn, err;
-
-            if (!tinyobj::LoadObj(&attrib, &shapes, &materials, &warn, &err, MODEL_PATH.c_str())) {
-                throw std::runtime_error(warn + err);
-            }
-
-            for (const auto& shape : shapes) {
-                for (const auto& index : shape.mesh.indices) {
-                    Vertex vertex = {};
-
-                    vertices.push_back(vertex);
-                    indices.push_back(indices.size());
-
-                    vertex.pos = {
-                        attrib.vertices[3 * index.vertex_index + 0],
-                        attrib.vertices[3 * index.vertex_index + 1],
-                        attrib.vertices[3 * index.vertex_index + 2]
-                    };
-
-                    vertex.texCoord = {
-                        attrib.texcoords[2 * index.texcoord_index + 0],
-                        attrib.texcoords[2 * index.texcoord_index + 1]
-                    };
-
-                    vertex.color = {1.0f, 1.0f, 1.0f};
-                }
-            }
         }
 
         /*
@@ -467,9 +489,6 @@ class Viewer {
 
             //mipmapping
             samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
-            samplerInfo.mipLodBias = 0.0f;
-            samplerInfo.minLod = 0.0f;
-            samplerInfo.maxLod = 0.0f;
 
             if (vkCreateSampler(device, &samplerInfo, nullptr, &textureSampler) != VK_SUCCESS) {
                 throw std::runtime_error("failed to create texture sampler!");
@@ -583,8 +602,8 @@ class Viewer {
             that involve the resource must wait on the barrier. We need to do that despite already using 
             vkQueueWaitIdle to manually synchronize
             */
-            barrier.srcAccessMask = 0; // TODO
-            barrier.dstAccessMask = 0; // TODO
+/*             barrier.srcAccessMask = 0; // TODO
+            barrier.dstAccessMask = 0; // TODO */
 
             VkPipelineStageFlags sourceStage;
             VkPipelineStageFlags destinationStage;
@@ -672,10 +691,10 @@ class Viewer {
         }
 
         void createTextureImage() {
-            int texWidth, texHeight, texChannels;
-            stbi_uc* pixels = stbi_load(TEXTURE_PATH.c_str(), &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);            VkDeviceSize imageSize = texWidth * texHeight * 4;
+             
+            VkDeviceSize imageSize = model.txt.texWidth * model.txt.texHeight * 4;
 
-            if (!pixels) {
+            if (!model.txt.pixels) {
                 throw std::runtime_error("failed to load texture image!");
             }
 
@@ -687,17 +706,15 @@ class Viewer {
             //copy the pixel values that we got from the image loading library to the buffer
             void* data;
             vkMapMemory(device, stagingBufferMemory, 0, imageSize, 0, &data);
-            memcpy(data, pixels, static_cast<size_t>(imageSize));
+            memcpy(data, model.txt.pixels, static_cast<size_t>(imageSize));
             vkUnmapMemory(device, stagingBufferMemory);
 
-            stbi_image_free(pixels);
-
-            createImage(texWidth, texHeight, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, textureImage, textureImageMemory);
+            createImage(model.txt.texWidth, model.txt.texHeight, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, textureImage, textureImageMemory);
 
             //Transition the texture image to VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL
             transitionImageLayout(textureImage, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
             //Execute the buffer to image copy operation
-            copyBufferToImage(stagingBuffer, textureImage, static_cast<uint32_t>(texWidth), static_cast<uint32_t>(texHeight));
+            copyBufferToImage(stagingBuffer, textureImage, static_cast<uint32_t>(model.txt.texWidth), static_cast<uint32_t>(model.txt.texHeight));
             //to start sampling from the texture image in the shader, we need one last transition
             transitionImageLayout(textureImage, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 
@@ -759,24 +776,28 @@ class Viewer {
         }
 
         //camera update
-        void updateCamera(Camera& camera, glm::vec2 offset) {
-
-
-            float phi = offset.x;
-            float theta = offset.y;
-            double radius = sqrt(camera.position.x*camera.position.x+camera.position.y*camera.position.y+camera.position.z*camera.position.z);
+        void updateCamera(Camera& camera) {
 
             glm::vec3 position;
 
-            position.x = radius*sin(theta) * cos(phi);
-            position.y = radius*sin(theta) * sin(phi);
-            position.z = radius*cos(theta);
+            if (camera.theta < 0) camera.theta = 0.001f;
+            if (camera.theta > pi) camera.theta = pi - 0.001f;
+
+            position.x = camera.distance*sin(camera.theta) * cos(camera.phi);
+            position.y = camera.distance*sin(camera.theta) * sin(camera.phi);
+            position.z = camera.distance*cos(camera.theta);
+
             camera.position = position;
+            camera.target = glm::vec3(0,0,0);
+            camera.up = glm::vec3(0,0,1);
         }
 
         //MOUSE MOVEMENT
         int is_mouse_left(GLFWwindow* window) {
             return glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS;
+        }
+        int is_mouse_right(GLFWwindow* window) {
+            return glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS;
         }
 
         glm::vec2 get_mouse_position(GLFWwindow* window) {
@@ -858,7 +879,7 @@ class Viewer {
         }
 
         void createIndexBuffer() {
-            VkDeviceSize bufferSize = sizeof(indices[0]) * indices.size();
+            VkDeviceSize bufferSize = sizeof(model.indices[0]) * model.indices.size();
 
             VkBuffer stagingBuffer;
             VkDeviceMemory stagingBufferMemory;
@@ -866,7 +887,7 @@ class Viewer {
 
             void* data;
             vkMapMemory(device, stagingBufferMemory, 0, bufferSize, 0, &data);
-            memcpy(data, indices.data(), (size_t) bufferSize);
+            memcpy(data, model.indices.data(), (size_t) bufferSize);
             vkUnmapMemory(device, stagingBufferMemory);
 
             createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, indexBuffer, indexBufferMemory);
@@ -919,7 +940,7 @@ class Viewer {
         */
 
         void createVertexBuffer() {
-            VkDeviceSize bufferSize = sizeof(vertices[0]) * vertices.size();
+            VkDeviceSize bufferSize = sizeof(model.vertices[0]) * model.vertices.size();
 
             //stagingBuffer with stagingBufferMemory for mapping and copying the vertex data.
             VkBuffer stagingBuffer;
@@ -937,7 +958,7 @@ class Viewer {
             //access a region of the specified memory resource defined by an offset and size
             vkMapMemory(device, stagingBufferMemory, 0, bufferSize, 0, &data);
             //memcpy the vertex data to the mapped memory and unmap it again using vkUnmapMemory
-            memcpy(data, vertices.data(), (size_t) bufferSize);
+            memcpy(data, model.vertices.data(), (size_t) bufferSize);
             vkUnmapMemory(device, stagingBufferMemory);
                     
             /* 
@@ -1080,7 +1101,6 @@ class Viewer {
         void drawFrame() {
             //takes an array of fences and waits for either any or all of them to be signaled before returning
             vkWaitForFences(device, 1, &inFlightFences[currentFrame], VK_TRUE, std::numeric_limits<uint64_t>::max());
-            vkResetFences(device, 1, &inFlightFences[currentFrame]);
 
             // acquire an image from the swap chain
             uint32_t imageIndex;
@@ -1143,7 +1163,7 @@ class Viewer {
 /*          Results. It allows you to specify an array of VkResult values to check for every 
             individual swap chain if presentation was successful. It's not necessary if you're only 
             using a single swap chain, because you can simply use the return value of the present function */
-            presentInfo.pResults = nullptr;
+            //presentInfo.pResults = nullptr;
             // submits the request to present an image to the swap chain
             result = vkQueuePresentKHR(presentQueue, &presentInfo);
 
@@ -1158,7 +1178,7 @@ class Viewer {
             but doesn't actually check if any of it finishes. If the CPU is submitting
             work faster than the GPU can keep up with then the queue will slowly fill up with work, 
             and the memory usage of the application will slowly growing */
-            vkQueueWaitIdle(presentQueue);
+            //vkQueueWaitIdle(presentQueue);
             // with the modulo operator we ensure that the frame index loops around after every MAX_FRAMES_IN_FLIGHT enqueued frames.
             currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
 
@@ -1166,10 +1186,6 @@ class Viewer {
 
         //This function will generate a new transformation every frame to make the geometry spin around
         void updateUniformBuffer(uint32_t currentImage) {
-            static auto startTime = std::chrono::high_resolution_clock::now();
-
-            auto currentTime = std::chrono::high_resolution_clock::now();
-            float time = std::chrono::duration<float, std::chrono::seconds::period>(currentTime - startTime).count();
 
             UniformBufferObject ubo = {};
             ubo.model = glm::rotate(glm::mat4(1.0f), glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f));
@@ -1237,8 +1253,6 @@ class Viewer {
                 //binding the vertex buffer during rendering operations
                 vkCmdBindVertexBuffers(commandBuffers[i], 0, 1, vertexBuffers, offsets);
                 vkCmdBindIndexBuffer(commandBuffers[i], indexBuffer, 0, VK_INDEX_TYPE_UINT32);
-                // vertexCount, instanceCount, firstVertex(offset into the vertex buffer), firstInstance( offset for instanced rendering)
-                vkCmdDraw(commandBuffers[i], static_cast<uint32_t>(vertices.size()), 1, 0, 0);
                 /* 
                 - Descriptor sets are not unique to graphics pipelines. Therefore we need to specify if we 
                 want to bind descriptor sets to the graphics or compute pipeline
@@ -1248,7 +1262,7 @@ class Viewer {
                 - array of sets to bind
                 */
                 vkCmdBindDescriptorSets(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &descriptorSets[i], 0, nullptr);
-                vkCmdDrawIndexed(commandBuffers[i], static_cast<uint32_t>(indices.size()), 1, 0, 0, 0);
+                vkCmdDrawIndexed(commandBuffers[i], static_cast<uint32_t>(model.indices.size()), 1, 0, 0, 0);
                 vkCmdEndRenderPass(commandBuffers[i]);
 
                 if (vkEndCommandBuffer(commandBuffers[i]) != VK_SUCCESS) {
@@ -1525,13 +1539,7 @@ class Viewer {
             finalColor.a = newAlpha.a; */
             VkPipelineColorBlendAttachmentState colorBlendAttachment = {};
             colorBlendAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
-            colorBlendAttachment.blendEnable = VK_TRUE;
-            colorBlendAttachment.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
-            colorBlendAttachment.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
-            colorBlendAttachment.colorBlendOp = VK_BLEND_OP_ADD;
-            colorBlendAttachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
-            colorBlendAttachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
-            colorBlendAttachment.alphaBlendOp = VK_BLEND_OP_ADD;
+            colorBlendAttachment.blendEnable = VK_FALSE;
 
             // set blend constants that you can use as blend factors in the color blending
             // calculations specified above
@@ -1550,7 +1558,7 @@ class Viewer {
             structs can actually be changed without recreating the pipeline. 
             Examples are the size of the viewport, line width and blend constants. To do that
             we need this structure */
-            VkDynamicState dynamicStates[] = {
+/*             VkDynamicState dynamicStates[] = {
                 VK_DYNAMIC_STATE_VIEWPORT,
                 VK_DYNAMIC_STATE_LINE_WIDTH
             };
@@ -1558,7 +1566,7 @@ class Viewer {
             VkPipelineDynamicStateCreateInfo dynamicState = {};
             dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
             dynamicState.dynamicStateCount = 2;
-            dynamicState.pDynamicStates = dynamicStates;
+            dynamicState.pDynamicStates = dynamicStates; */
 
 /*          The structure also specifies push constants, 
             which are another way of passing dynamic values to shaders */
@@ -1632,8 +1640,12 @@ class Viewer {
 
         void cleanupSwapChain() {
 
-            for (size_t i = 0; i < swapChainFramebuffers.size(); i++) {
-                vkDestroyFramebuffer(device, swapChainFramebuffers[i], nullptr);
+            vkDestroyImageView(device, depthImageView, nullptr);
+            vkDestroyImage(device, depthImage, nullptr);
+            vkFreeMemory(device, depthImageMemory, nullptr);
+
+            for (auto framebuffer : swapChainFramebuffers) {
+                vkDestroyFramebuffer(device, framebuffer, nullptr);
             }
 
             vkFreeCommandBuffers(device, commandPool, static_cast<uint32_t>(commandBuffers.size()), commandBuffers.data());
@@ -1642,8 +1654,8 @@ class Viewer {
             vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
             vkDestroyRenderPass(device, renderPass, nullptr);
 
-            for (size_t i = 0; i < swapChainImageViews.size(); i++) {
-                vkDestroyImageView(device, swapChainImageViews[i], nullptr);
+            for (auto imageView : swapChainImageViews) {
+                vkDestroyImageView(device, imageView, nullptr);
             }
 
             vkDestroySwapchainKHR(device, swapChain, nullptr);
@@ -1680,6 +1692,7 @@ class Viewer {
             createImageViews();
             createRenderPass();
             createGraphicsPipeline();
+            createDepthResources();
             createFramebuffers();
             createUniformBuffers();
             createDescriptorPool();
@@ -1986,7 +1999,7 @@ class Viewer {
 
             VkApplicationInfo appInfo = {};
             appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
-            appInfo.pApplicationName = "Hello Triangle";
+            appInfo.pApplicationName = "Viewer";
             appInfo.applicationVersion = VK_MAKE_VERSION(1, 0, 0);
             appInfo.pEngineName = "No Engine";
             appInfo.engineVersion = VK_MAKE_VERSION(1, 0, 0);
