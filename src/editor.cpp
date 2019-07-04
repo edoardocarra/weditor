@@ -6,22 +6,34 @@
 #define STB_IMAGE_IMPLEMENTATION
 #include <stb_image.h>
 
-const std::string MODEL_PATH = "models/chalet.obj";
-const std::string TEXTURE_PATH = "textures/chalet.jpg";
+void loadTexture(Model& model, char* filename) {
+	std::cout << "[LOADING] " << filename << std::endl;
 
-void loadTexture(Model& model) {
+	int          texWidth = 1, texHeight = 1;
+    int          texChannels = 4;
+    glm::u8vec4* color       = new glm::u8vec4(155, 155, 155, 255);
+    stbi_uc*     pixels      = reinterpret_cast<stbi_uc*>(color);
+
 	Texture txt;
-	txt.pixels = stbi_load(TEXTURE_PATH.c_str(), &(txt.texWidth), &(txt.texHeight), &(txt.texChannels), STBI_rgb_alpha);
+	if (filename!=nullptr)
+		txt.pixels = stbi_load(filename, &(txt.texWidth), &(txt.texHeight), &(txt.texChannels), STBI_rgb_alpha); 
+	else {
+		txt.pixels = pixels;
+		txt.texWidth = texWidth;
+		txt.texHeight = texHeight;
+	}
 	model.txt = txt;
 }
 
-void loadModel(Model& model) {
+void loadModel(Model& model, char* filename) {
+	std::cout << "[LOADING] " << filename << std::endl;
+
 	tinyobj::attrib_t attrib;
 	std::vector<tinyobj::shape_t> shapes;
 	std::vector<tinyobj::material_t> materials;
 	std::string warn, err;
 
-	if (!tinyobj::LoadObj(&attrib, &shapes, &materials, &warn, &err, MODEL_PATH.c_str())) {
+	if (!tinyobj::LoadObj(&attrib, &shapes, &materials, &warn, &err, filename)) {
 		throw std::runtime_error(warn + err);
 	}
 
@@ -54,14 +66,19 @@ void loadModel(Model& model) {
 	}
 }
 
-int main(void)
+int main(int argc, char *argv[])
 {
 
 	Viewer app;
+
+	if (argc == 1) return EXIT_FAILURE;
 	
-	try{ 
-		loadModel(app.model);
-		loadTexture(app.model);
+	try{
+		loadModel(app.model, argv[1]);
+		if(argc > 2) 
+			loadTexture(app.model, argv[2]);
+		else
+			loadTexture(app.model, nullptr);
 		app.run();
 	} catch (const std::exception& e) {
 		std::cerr << e.what() << std::endl;

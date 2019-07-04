@@ -107,9 +107,9 @@ namespace std {
 }
 
 struct Camera {
-    glm::vec3 position;
-    glm::vec3 target;
-    glm::vec3 up;
+    glm::vec3 position = glm::vec3(0,0,0);
+    glm::vec3 target = glm::vec3(0,0,0);
+    glm::vec3 up = glm::vec3(0,0,1);
     float theta = pi/2;
     float phi = -pi/2;
     float distance = 4;
@@ -142,7 +142,7 @@ image representation is tied to the windows system, so it is not part of the Vul
 We need to enable enable the VK_KHR_swapchain device extension after querying for its support.
 */
 const std::vector<const char*> deviceExtensions = {
-    VK_KHR_SWAPCHAIN_EXTENSION_NAME
+    VK_KHR_SWAPCHAIN_EXTENSION_NAME,
 };
 
 struct SwapChainSupportDetails {
@@ -356,7 +356,7 @@ class Viewer {
             glm::vec2 last_pos = glm::vec2(0,0);
             double lastTime = glfwGetTime();
             int nbFrames = 0;
-            updateCamera(camera);
+            updateCamera(camera, glm::vec2(0,0), 0 , glm::vec2(0,0));
             while(!glfwWindowShouldClose(window)) {
                 double currentTime = glfwGetTime();
                 double delta = currentTime - lastTime;
@@ -377,21 +377,16 @@ class Viewer {
                 mouse_pos = get_mouse_position(window);
                 int mouse_left = is_mouse_left(window);
                 int mouse_right = is_mouse_right(window);
-                if(mouse_left) {
-                    glm::vec2 offset = glm::vec2(mouse_pos.x-last_pos.x,mouse_pos.y-last_pos.y) / 100.0f;
-                    if(offset != glm::vec2(0,0)) {
-                        camera.theta += offset.y;
-                        camera.phi += offset.x;
-                        updateCamera(camera);
-                    }
-                }
-                if(mouse_right) {
-                    glm::vec2 offset = glm::vec2(mouse_pos.x-last_pos.x,mouse_pos.y-last_pos.y) / 100.0f;
-                    if(offset != glm::vec2(0,0)) {
-                        camera.distance += offset.x;
-                        updateCamera(camera);
-                    }
-                }
+                int mouse_middle = is_mouse_middle(window);
+                glm::vec2 rotation = glm::vec2(0,0);
+                float dolly = 0;
+                glm::vec2 pan = glm::vec2(0,0);
+                if(mouse_left)  rotation = glm::vec2(mouse_pos.x-last_pos.x,mouse_pos.y-last_pos.y) / 100.0f;
+                if(mouse_right) dolly = (mouse_pos.x-last_pos.x) / 100.0f;
+                if(mouse_middle)  pan = glm::vec2(mouse_pos.x-last_pos.x,mouse_pos.y-last_pos.y) / 100.0f;
+                
+                if(rotation != glm::vec2(0,0) || dolly != 0 || pan != glm::vec2(0,0)) updateCamera(camera,rotation,dolly,pan);
+
                 glfwPollEvents();
                 drawFrame();
             }
@@ -776,20 +771,23 @@ class Viewer {
         }
 
         //camera update
-        void updateCamera(Camera& camera) {
+        void updateCamera(Camera& camera, glm::vec2 rotation, float dolly, glm::vec2 pan) {
 
-            glm::vec3 position;
-
+            camera.theta += rotation.y;
             if (camera.theta < 0) camera.theta = 0.001f;
             if (camera.theta > pi) camera.theta = pi - 0.001f;
 
-            position.x = camera.distance*sin(camera.theta) * cos(camera.phi);
-            position.y = camera.distance*sin(camera.theta) * sin(camera.phi);
-            position.z = camera.distance*cos(camera.theta);
+            camera.phi += rotation.x;
+            camera.distance += dolly;
+            camera.target.x += pan.x;
+            camera.target.y += pan.y;
 
+            glm::vec3 position;
+            position.x = pan.x + camera.distance*sin(camera.theta) * cos(camera.phi);
+            position.y = pan.y + camera.distance*sin(camera.theta) * sin(camera.phi);
+            position.z = camera.distance*cos(camera.theta);
             camera.position = position;
-            camera.target = glm::vec3(0,0,0);
-            camera.up = glm::vec3(0,0,1);
+
         }
 
         //MOUSE MOVEMENT
@@ -798,6 +796,9 @@ class Viewer {
         }
         int is_mouse_right(GLFWwindow* window) {
             return glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS;
+        }
+        int is_mouse_middle(GLFWwindow* window) {
+            return glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_3) == GLFW_PRESS;
         }
 
         glm::vec2 get_mouse_position(GLFWwindow* window) {
