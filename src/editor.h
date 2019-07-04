@@ -107,12 +107,12 @@ namespace std {
 }
 
 struct Camera {
-    glm::vec3 position = glm::vec3(0,0,0);
-    glm::vec3 target = glm::vec3(0,0,0);
-    glm::vec3 up = glm::vec3(0,0,1);
-    float theta = pi/2;
-    float phi = -pi/2;
-    float distance = 4;
+    glm::vec3 position;
+    glm::vec3 target;
+    glm::vec3 up;
+    float theta;
+    float phi;
+    float distance;
 };
 
 //descriptor
@@ -203,6 +203,7 @@ static std::vector<char> readFile(const std::string& filename) {
 class Viewer {
     public:
         Model model;
+        Camera camera;
         void run() {
             initWindow();
             initVulkan();
@@ -300,9 +301,6 @@ class Viewer {
         VkImage depthImage;
         VkDeviceMemory depthImageMemory;
         VkImageView depthImageView;
-
-        //camera features
-        Camera camera;
 
         VkImage textureImage;
         VkDeviceMemory textureImageMemory;

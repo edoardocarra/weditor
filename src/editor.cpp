@@ -6,6 +6,15 @@
 #define STB_IMAGE_IMPLEMENTATION
 #include <stb_image.h>
 
+void setupCamera(Camera& camera) {
+    camera.position = glm::vec3(0,0,0);
+    camera.target = glm::vec3(0,0,0);
+    camera.up = glm::vec3(0,0,1);
+    camera.theta = pi/2;
+    camera.phi = -pi/2;
+    camera.distance = 4;
+}
+
 void loadTexture(Model& model, char* filename) {
 	std::cout << "[LOADING] " << filename << std::endl;
 
@@ -79,6 +88,7 @@ int main(int argc, char *argv[])
 			loadTexture(app.model, argv[2]);
 		else
 			loadTexture(app.model, nullptr);
+		setupCamera(app.camera);
 		app.run();
 	} catch (const std::exception& e) {
 		std::cerr << e.what() << std::endl;
