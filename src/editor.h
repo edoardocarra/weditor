@@ -35,7 +35,7 @@ check if the new fragment is closer than the previous one
 #include <chrono>
 #include <unordered_map>
 #include <sstream>
-
+#include <math.h>
 
 inline const double pi  = 3.14159265358979323846;
 
@@ -96,6 +96,47 @@ struct Model {
     Texture txt;
 };
 
+//
+// RAYTRACE
+//
+struct ray {
+
+    public:
+        ray() {}
+        ray(const glm::vec3& a, const glm::vec3& b) { A = a; B = b }
+        glm::vec3 origin() const {return A;}
+        glm::vec3 direction() const {return B;}
+        glm::vec3 point_at_parameter(float t) const { return A + t*B; }
+        glm::vec3 A;
+        glm::vec3 B;
+
+};
+
+struct raytracer {
+
+    public:
+        bool is_hit(const ray& r, const Model& m, int index) {
+            //ray triangle intersection
+            return true;
+        }
+        glm::vec3 color(const ray& r) {
+            if(is_hit())
+        }
+        void trace(Model& m, int width, int height) {
+            glm::vec3 lower_left_corner(0,0,0);
+            glm::vec3 horizontal(width,0,0);
+            glm::vec3 vertical(0,0,height);
+            glm::vec3 origin(0,0,0);
+            for (int j = height -1; j >= 0; j--){
+                for (int i = 0; i < width; i++ ) {
+                    
+                }
+            }
+
+        }
+
+};
+
 namespace std {
     template<> struct hash<Vertex> {
         size_t operator()(Vertex const& vertex) const {
@@ -142,7 +183,7 @@ image representation is tied to the windows system, so it is not part of the Vul
 We need to enable enable the VK_KHR_swapchain device extension after querying for its support.
 */
 const std::vector<const char*> deviceExtensions = {
-    VK_KHR_SWAPCHAIN_EXTENSION_NAME,
+    VK_KHR_SWAPCHAIN_EXTENSION_NAME
 };
 
 struct SwapChainSupportDetails {
