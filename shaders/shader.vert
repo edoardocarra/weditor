@@ -10,6 +10,12 @@ layout(binding = 0) uniform UniformBufferObject {
     vec2 resolution;
 } ubo;
 
+layout(binding = 1) uniform LightObject {
+    vec3 pos;
+    vec3 color;
+    float ambient;
+} lo;
+
 layout(location = 0) in vec3 inPosition;
 layout(location = 1) in vec3 inNormal;
 layout(location = 2) in vec3 inColor;

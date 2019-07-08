@@ -130,6 +130,12 @@ struct UniformBufferObject {
     alignas(4) glm::vec2 resolution;
 };
 
+struct LightObject {
+    alignas(16) glm::vec3 position;
+    alignas(16) glm::vec3 color;
+    alignas(4) float ambient;
+};
+
 /* The stages that the current frame has already progressed through are idle 
 and could already be used for a next frame*/
 const int MAX_FRAMES_IN_FLIGHT = 2;
@@ -1189,6 +1195,13 @@ class Viewer {
             // with the modulo operator we ensure that the frame index loops around after every MAX_FRAMES_IN_FLIGHT enqueued frames.
             currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
 
+        }
+
+        //This function will generate a new transformation every frame to make the geometry spin around
+        void updateLightObject(uint32_t currentImage) {
+
+                //  todo: come sotto ma per un light object
+      
         }
 
         //This function will generate a new transformation every frame to make the geometry spin around
