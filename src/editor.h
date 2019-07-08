@@ -93,6 +93,7 @@ struct Texture {
 struct Model {
     std::vector<Vertex> vertices;
     std::vector<uint32_t> indices;
+    std::vector<glm::vec3> faces;
     Texture txt;
 };
 
@@ -103,7 +104,7 @@ struct ray {
 
     public:
         ray() {}
-        ray(const glm::vec3& a, const glm::vec3& b) { A = a; B = b }
+        ray(const glm::vec3& a, const glm::vec3& b) { A = a; B = b; }
         glm::vec3 origin() const {return A;}
         glm::vec3 direction() const {return B;}
         glm::vec3 point_at_parameter(float t) const { return A + t*B; }
@@ -115,12 +116,15 @@ struct ray {
 struct raytracer {
 
     public:
-        bool is_hit(const ray& r, const Model& m, int index) {
+        bool ray_triangle_intersection(const ray& r, glm::vec3& triangle) {
             //ray triangle intersection
             return true;
         }
-        glm::vec3 color(const ray& r) {
-            if(is_hit())
+        glm::vec3 color(const ray& r, Model& m) {
+            for (auto tri : m.indices) {
+                std::cout << tri << std::endl;
+            }
+            return glm::vec3(0,0,0);
         }
         void trace(Model& m, int width, int height) {
             glm::vec3 lower_left_corner(0,0,0);
@@ -129,7 +133,10 @@ struct raytracer {
             glm::vec3 origin(0,0,0);
             for (int j = height -1; j >= 0; j--){
                 for (int i = 0; i < width; i++ ) {
-                    
+                    float u = float(i) / float(width);
+                    float v = float(j) / float(height);
+                    ray r(origin, lower_left_corner + u*horizontal + v*vertical);
+                    color(r, m);
                 }
             }
 
