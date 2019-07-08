@@ -97,53 +97,6 @@ struct Model {
     Texture txt;
 };
 
-//
-// RAYTRACE
-//
-struct ray {
-
-    public:
-        ray() {}
-        ray(const glm::vec3& a, const glm::vec3& b) { A = a; B = b; }
-        glm::vec3 origin() const {return A;}
-        glm::vec3 direction() const {return B;}
-        glm::vec3 point_at_parameter(float t) const { return A + t*B; }
-        glm::vec3 A;
-        glm::vec3 B;
-
-};
-
-struct raytracer {
-
-    public:
-        bool ray_triangle_intersection(const ray& r, glm::vec3& triangle) {
-            //ray triangle intersection
-            return true;
-        }
-        glm::vec3 color(const ray& r, Model& m) {
-            for (auto tri : m.indices) {
-                std::cout << tri << std::endl;
-            }
-            return glm::vec3(0,0,0);
-        }
-        void trace(Model& m, int width, int height) {
-            glm::vec3 lower_left_corner(0,0,0);
-            glm::vec3 horizontal(width,0,0);
-            glm::vec3 vertical(0,0,height);
-            glm::vec3 origin(0,0,0);
-            for (int j = height -1; j >= 0; j--){
-                for (int i = 0; i < width; i++ ) {
-                    float u = float(i) / float(width);
-                    float v = float(j) / float(height);
-                    ray r(origin, lower_left_corner + u*horizontal + v*vertical);
-                    color(r, m);
-                }
-            }
-
-        }
-
-};
-
 namespace std {
     template<> struct hash<Vertex> {
         size_t operator()(Vertex const& vertex) const {
@@ -168,6 +121,7 @@ struct UniformBufferObject {
     alignas(16) glm::mat4 model;
     alignas(16) glm::mat4 view;
     alignas(16) glm::mat4 proj;
+    alignas(4) glm::vec2 resolution;
 };
 
 /* The stages that the current frame has already progressed through are idle 

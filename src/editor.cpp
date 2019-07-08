@@ -72,7 +72,7 @@ void loadModel(Model& model, char* filename) {
 
 			model.indices.push_back(uniqueVertices[vertex]);
 		}
-
+		
 		for (size_t f = 0; f < shape.mesh.indices.size() / 3; f++) {
 			// Get the three indexes of the face (all faces are triangular)
 			tinyobj::index_t idx0 = shape.mesh.indices[3 * f + 0];
@@ -85,7 +85,6 @@ void loadModel(Model& model, char* filename) {
 			face.z = idx2.vertex_index; assert(face.z >= 0);
 
 			model.faces.push_back(face);
-
 		}
 	}
 }
