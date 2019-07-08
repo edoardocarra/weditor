@@ -15,6 +15,9 @@ layout(location = 1) in vec2 fragTexCoord;
 layout(location = 2) in vec3 eyePos;
 layout(location = 3) in vec2 resolution;
 layout(location = 4) in float fov;
+layout(location = 5) in vec3 normal;
+layout(location = 6) in vec3 fragPos;
+
 
 //A combined image sampler descriptor is represented in GLSL by a sampler uniform
 layout(binding = 1) uniform sampler2D texSampler;
@@ -62,7 +65,19 @@ void main() {
         outColor = vec4(0.0, 0.0, 0.0, 0.0);
         return;
     }
-    color = vec4(1.0, 0.0, 0.0, 1.0);
-    //outColor = vec4(fragColor * texture(texSampler, fragTexCoord).rgb, 1.0);
+
+    float ambientStrength = 0.4;
+    vec3 norm = normalize(normal);
+    vec3 lightPos = vec3(0.0, 1.0, 0.0);
+    vec3 lightColor = vec3(0.8, 0.8, 0.8);
+    vec3 lightDir = normalize(lightPos - fragPos);
+
+    float diff = max(dot(norm, lightDir), 0.0);
+    vec3 ambient = ambientStrength * lightColor;
+    vec3 diffuse = diff * lightColor;
+
+    vec3 result = (ambient + diffuse) * vec3(fragColor * texture(texSampler, fragTexCoord).rgb);
+
+    outColor = vec4(result, 1.0);
 
 }
