@@ -6,9 +6,17 @@
 #define STB_IMAGE_IMPLEMENTATION
 #include <stb_image.h>
 
-void setupCamera(Camera& camera) {
+void setupLight (Light& camera) {
+    camera.position = glm::vec3(0.0, 2.0, 0.0);
+    camera.color = glm::vec3(0.6, 0.6, 0.6);
+    camera.intensity = 0.5;
+}
+
+void setupCamera(Camera& camera, const Model& model) {
     camera.position = glm::vec3(0,0,0);
-    camera.target = glm::vec3(0,0,0);
+    camera.target = glm::vec3((model.bbox_max.x + model.bbox_min.x)/2,
+							  (model.bbox_max.y + model.bbox_min.y)/2,
+							  (model.bbox_max.z + model.bbox_min.z)/2);
     camera.up = glm::vec3(0,0,1);
     camera.theta = pi/2;
     camera.phi = -pi/2;
@@ -49,14 +57,22 @@ void loadModel(Model& model, char* filename) {
 	std::unordered_map<Vertex, uint32_t> uniqueVertices = {};
 
 	for (const auto& shape : shapes) {
+		glm::vec3 bbox_min = glm::vec3(FLT_MAX,FLT_MAX,FLT_MAX);
+		glm::vec3 bbox_max = glm::vec3(FLT_MIN,FLT_MIN,FLT_MIN);
 		for (const auto& index : shape.mesh.indices) {
 			Vertex vertex = {};
-
 			vertex.pos = {
 				attrib.vertices[3 * index.vertex_index + 0],
 				attrib.vertices[3 * index.vertex_index + 1],
 				attrib.vertices[3 * index.vertex_index + 2]
 			};
+
+			if (vertex.pos.x < bbox_min.x) bbox_min.x = vertex.pos.x;
+			if (vertex.pos.y < bbox_min.y) bbox_min.y = vertex.pos.y;
+			if (vertex.pos.z < bbox_min.z) bbox_min.z = vertex.pos.z;
+			if (vertex.pos.x > bbox_max.x) bbox_max.x = vertex.pos.x;
+			if (vertex.pos.y > bbox_max.y) bbox_max.y = vertex.pos.y;
+			if (vertex.pos.z > bbox_max.z) bbox_max.z = vertex.pos.z;
 
 			vertex.normal = {
 				attrib.normals[3 * index.normal_index + 0],
@@ -92,6 +108,9 @@ void loadModel(Model& model, char* filename) {
 
 			model.faces.push_back(face);
 		}
+
+		model.bbox_min = bbox_min;
+		model.bbox_max = bbox_max;
 	}
 }
 
@@ -108,7 +127,8 @@ int main(int argc, char *argv[])
 			loadTexture(app.model, argv[2]);
 		else
 			loadTexture(app.model, nullptr);
-		setupCamera(app.camera);
+		setupCamera(app.camera, app.model);
+		setupLight(app.light);
 		app.run();
 	} catch (const std::exception& e) {
 		std::cerr << e.what() << std::endl;

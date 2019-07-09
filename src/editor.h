@@ -101,6 +101,8 @@ struct Model {
     std::vector<uint32_t> indices;
     std::vector<glm::vec3> faces;
     Texture txt;
+    glm::vec3 bbox_min;
+    glm::vec3 bbox_max;
 };
 
 namespace std {
@@ -122,18 +124,21 @@ struct Camera {
     float distance;
 };
 
+struct Light {
+    glm::vec3 position;
+    glm::vec3 color;
+    float intensity;
+};
+
 //descriptor
 struct UniformBufferObject {
     alignas(16) glm::mat4 model;
     alignas(16) glm::mat4 view;
     alignas(16) glm::mat4 proj;
     alignas(4) glm::vec2 resolution;
-};
-
-struct LightObject {
-    alignas(16) glm::vec3 position;
-    alignas(16) glm::vec3 color;
-    alignas(4) float ambient;
+    alignas(16) glm::vec3 light_position;
+    alignas(16) glm::vec3 light_color;
+    alignas(4) float light_intensity;
 };
 
 /* The stages that the current frame has already progressed through are idle 
@@ -218,6 +223,7 @@ class Viewer {
     public:
         Model model;
         Camera camera;
+        Light light;
         void run() {
             initWindow();
             initVulkan();
@@ -396,9 +402,8 @@ class Viewer {
                 if(mouse_left)  rotation = glm::vec2(mouse_pos.x-last_pos.x,mouse_pos.y-last_pos.y) / 100.0f;
                 if(mouse_right) dolly = (mouse_pos.x-last_pos.x) / 100.0f;
                 if(mouse_middle)  pan = glm::vec2(mouse_pos.x-last_pos.x,mouse_pos.y-last_pos.y) / 100.0f;
-                
                 if(rotation != glm::vec2(0,0) || dolly != 0 || pan != glm::vec2(0,0)) updateCamera(camera,rotation,dolly,pan);
-
+                updateLight(light);
                 glfwPollEvents();
                 drawFrame();
             }
@@ -802,6 +807,22 @@ class Viewer {
 
         }
 
+        //light update
+        void updateLight(Light& light) {
+
+            static auto startTime = std::chrono::high_resolution_clock::now();
+
+            auto currentTime = std::chrono::high_resolution_clock::now();
+            float time = std::chrono::duration<float, std::chrono::seconds::period>(currentTime - startTime).count();
+            
+            float distance = sqrt(light.position.x*light.position.x + 
+                                  light.position.y*light.position.y + 
+                                  light.position.z*light.position.z);
+
+            light.position.x = distance * cos(time/100.0f * 90.0f);
+            light.position.y = distance * sin(time/100.0f * 90.0f);
+        }
+
         //MOUSE MOVEMENT
         int is_mouse_left(GLFWwindow* window) {
             return glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS;
@@ -1198,13 +1219,6 @@ class Viewer {
         }
 
         //This function will generate a new transformation every frame to make the geometry spin around
-        void updateLightObject(uint32_t currentImage) {
-
-                //  todo: come sotto ma per un light object
-      
-        }
-
-        //This function will generate a new transformation every frame to make the geometry spin around
         void updateUniformBuffer(uint32_t currentImage) {
 
             UniformBufferObject ubo = {};
@@ -1212,6 +1226,10 @@ class Viewer {
             ubo.view = glm::lookAt(camera.position, camera.target, camera.up);
             ubo.proj = glm::perspective(glm::radians(45.0f), swapChainExtent.width / (float) swapChainExtent.height, 0.1f, 10.0f);
             ubo.proj[1][1] *= -1;
+
+            ubo.light_color = light.color;
+            ubo.light_position = light.position;
+            ubo.light_intensity = light.intensity;
 
             void* data;
             vkMapMemory(device, uniformBuffersMemory[currentImage], 0, sizeof(ubo), 0, &data);
