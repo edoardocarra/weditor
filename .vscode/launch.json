@@ -9,7 +9,7 @@
             "type": "cppdbg",
             "request": "launch",
             "program": "${workspaceFolder}/Editor.exe",
-            "args": ["models/bunny.obj"],
+            "args": ["models/chalet.obj"],
             "stopAtEntry": false,
             "cwd": "${workspaceFolder}",
             "environment": [],
