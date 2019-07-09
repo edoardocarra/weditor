@@ -7,7 +7,7 @@
 #include <stb_image.h>
 
 void setupLight (Light& camera) {
-    camera.position = glm::vec3(0.0, 2.0, 0.0);
+    camera.position = glm::vec3(0.0, 5.0, 0.0);
     camera.color = glm::vec3(0.6, 0.6, 0.6);
     camera.intensity = 0.5;
 }
@@ -74,11 +74,12 @@ void loadModel(Model& model, char* filename) {
 			if (vertex.pos.y > bbox_max.y) bbox_max.y = vertex.pos.y;
 			if (vertex.pos.z > bbox_max.z) bbox_max.z = vertex.pos.z;
 
-			vertex.normal = {
-				attrib.normals[3 * index.normal_index + 0],
-				attrib.normals[3 * index.normal_index + 1],
-				attrib.normals[3 * index.normal_index + 2]
-			};
+			if(attrib.normals.size() > 0) 
+				vertex.normal = {attrib.normals[3 * index.normal_index + 0],
+			 					 attrib.normals[3 * index.normal_index + 1],
+			 				     attrib.normals[3 * index.normal_index + 2]};
+			else
+				vertex.normal = {0.0f, 0.0f, 0.0f};
 
 			vertex.texCoord = {
 				attrib.texcoords[2 * index.texcoord_index + 0],
@@ -107,6 +108,23 @@ void loadModel(Model& model, char* filename) {
 			face.z = idx2.vertex_index; assert(face.z >= 0);
 
 			model.faces.push_back(face);
+		}
+
+		//calculate normals if not present
+		if(attrib.normals.size() == 0) {
+			for(glm::vec3& face : model.faces) {
+				std::unordered_map<int,glm::vec3> vertex2normals;
+				glm::vec3 vA = model.vertices[face.x].pos;
+				glm::vec3 vB = model.vertices[face.y].pos;
+				glm::vec3 vC = model.vertices[face.z].pos;
+
+				glm::vec3 Nf = glm::cross(vB-vA, vC-vA);
+
+				model.vertices[face.x].normal += Nf;
+				model.vertices[face.y].normal += Nf;
+				model.vertices[face.z].normal += Nf;
+				
+			}
 		}
 
 		model.bbox_min = bbox_min;
