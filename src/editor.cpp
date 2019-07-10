@@ -74,13 +74,13 @@ void loadModel(Model& model, char* filename) {
 			if (vertex.pos.y > bbox_max.y) bbox_max.y = vertex.pos.y;
 			if (vertex.pos.z > bbox_max.z) bbox_max.z = vertex.pos.z;
 
-			if(attrib.normals.size() > 0) 
+/* 			if(attrib.normals.size() > 0) 
 				vertex.normal = {attrib.normals[3 * index.normal_index + 0],
 			 					 attrib.normals[3 * index.normal_index + 1],
 			 				     attrib.normals[3 * index.normal_index + 2]};
 			else
 				vertex.normal = {0.0f, 0.0f, 0.0f};
-
+ */
 			vertex.texCoord = {
 				attrib.texcoords[2 * index.texcoord_index + 0],
 				1.0f - attrib.texcoords[2 * index.texcoord_index + 1]
@@ -111,21 +111,24 @@ void loadModel(Model& model, char* filename) {
 		}
 
 		//calculate normals if not present
-		if(attrib.normals.size() == 0) {
+	//	if(attrib.normals.size() == 0) {
+			for(Vertex& vertex : model.vertices) { 
+				vertex.normal = glm::vec3(0.0f);
+			}
 			for(glm::vec3& face : model.faces) {
-				std::unordered_map<int,glm::vec3> vertex2normals;
 				glm::vec3 vA = model.vertices[face.x].pos;
 				glm::vec3 vB = model.vertices[face.y].pos;
 				glm::vec3 vC = model.vertices[face.z].pos;
-
-				glm::vec3 Nf = glm::cross(vB-vA, vC-vA);
-
-				model.vertices[face.x].normal += Nf;
-				model.vertices[face.y].normal += Nf;
-				model.vertices[face.z].normal += Nf;
-				
+				glm::vec3 normal = glm::cross(vB-vA, vC-vA);
+				float area = glm::length(glm::cross(vB-vA, vC-vA)) / 2;
+				model.vertices[face.x].normal += normal * area;
+				model.vertices[face.y].normal += normal * area;
+				model.vertices[face.z].normal += normal * area;
 			}
-		}
+			for(Vertex& vertex : model.vertices) { 
+				vertex.normal = glm::normalize(vertex.normal);
+			}
+	//	}
 
 		model.bbox_min = bbox_min;
 		model.bbox_max = bbox_max;

@@ -36,8 +36,8 @@ void main() {
     vec3 ambient = light_intensity * light_color;
     vec3 diffuse = diff * light_color;
 
-    vec3 result = (ambient + diffuse) * vec3(fragColor * texture(texSampler, fragTexCoord).rgb);
+    //vec3 result = (ambient + diffuse) * vec3(fragColor * texture(texSampler, fragTexCoord).rgb);
 
-    outColor = vec4(result, 1.0);
+    outColor = vec4(norm, 1.0);
 
 }
