@@ -8,7 +8,7 @@
             "type": "shell",
             "command": "g++",
             "args": [
-                "-g",
+           //     "-g",
                 "-std=c++17",
                 "./src/editor.cpp",
                 "-o","Editor.exe",

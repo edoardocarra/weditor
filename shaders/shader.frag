@@ -27,46 +27,7 @@ layout(binding = 1) uniform sampler2D texSampler;
 // You have to specify your own output variable for each framebuffer 
 layout(location = 0) out vec4 outColor;
 
-float sphereSDF(vec3 samplePoint) {
-    return length(samplePoint) - 1.0;
-}
-float sceneSDF(vec3 samplePoint) {
-    return sphereSDF(samplePoint);
-}
-
-float shortestDistanceToSurface(vec3 eye, vec3 marchingDirection, float start, float end) {
-    float depth = start;
-    for (int i = 0; i < MAX_MARCHING_STEPS; i++) {
-        float dist = sceneSDF(eye + depth * marchingDirection);
-        if (dist < EPSILON) {
-            return depth;
-        }
-        depth += dist;
-        if (depth >= end) {
-            return end;
-        }
-    }
-    return end;
-}
-
-vec3 rayDirection(float fieldOfView, vec2 size, vec2 fragCoord) {
-    vec2 xy = fragCoord - size / 2.0;
-    float z = size.y / tan(radians(fieldOfView) / 2.0);
-    return normalize(vec3(xy, -z));
-}
-
 void main() {
-
-    // The main function is called for every fragment 
-    //Textures are sampled using the built-in texture function. It takes a sampler and coordinate as arguments
-    vec3 dir = rayDirection(fov,resolution,gl_FragCoord.xy);
-    float dist = shortestDistanceToSurface(eyePos, dir, MIN_DIST, MAX_DIST);
-
-    if (dist > MAX_DIST - EPSILON) {
-        // Didn't hit anything
-        outColor = vec4(0.0, 0.0, 0.0, 0.0);
-        return;
-    }
 
     vec3 norm = normalize(normal);
     vec3 lightDir = normalize(light_position - fragPos);
