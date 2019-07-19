@@ -13,13 +13,18 @@ void setupLight(Light &camera) {
 }
 
 void setupCamera(Camera &camera, const Model &model) {
-  auto from = yocto::vec3f{10, 10, 10};
+  auto from = yocto::vec3f{0, 2, 3};
   auto to = yocto::vec3f{(model.bbox_max.x + model.bbox_min.x) / 2,
                          (model.bbox_max.y + model.bbox_min.y) / 2,
                          (model.bbox_max.z + model.bbox_min.z) / 2};
-  auto up = yocto::vec3f{0, 0, 1};
+  auto up = yocto::vec3f{0, 1, 0};
   camera.orthographic = false;
+  camera.film.x = 0.036f;
+  camera.film.y = 0.024f;
+  camera.lens = 0.050;
   camera.frame = yocto::lookat_frame(from, to, up);
+  camera.focus = length(from - to);
+  camera.aperture = 0.01f;
 }
 
 void loadTexture(Model &model, char *filename) {
@@ -78,16 +83,13 @@ void loadModel(Model &model, char *filename) {
       if (vertex.pos.z > bbox_max.z)
         bbox_max.z = vertex.pos.z;
 
-      /* 			if(attrib.normals.size() > 0)
-                                      vertex.normal = {attrib.normals[3 *
-         index.normal_index + 0],
-                                                                       attrib.normals[3
-         * index.normal_index + 1],
-                                                                   attrib.normals[3
-         * index.normal_index + 2]};
-                              else
-                                      vertex.normal = {0.0f, 0.0f, 0.0f};
-       */
+      if (attrib.normals.size() > 0)
+        vertex.normal = {attrib.normals[3 * index.normal_index + 0],
+                         attrib.normals[3 * index.normal_index + 1],
+                         attrib.normals[3 * index.normal_index + 2]};
+      else
+        vertex.normal = {0.0f, 0.0f, 0.0f};
+
       vertex.texCoord = {attrib.texcoords[2 * index.texcoord_index + 0],
                          1.0f - attrib.texcoords[2 * index.texcoord_index + 1]};
 
@@ -119,24 +121,24 @@ void loadModel(Model &model, char *filename) {
     }
 
     // calculate normals if not present
-    //	if(attrib.normals.size() == 0) {
-    for (Vertex &vertex : model.vertices) {
-      vertex.normal = glm::vec3(0.0f);
+    if (attrib.normals.size() == 0) {
+      for (Vertex &vertex : model.vertices) {
+        vertex.normal = glm::vec3(0.0f);
+      }
+      for (glm::vec3 &face : model.faces) {
+        glm::vec3 vA = model.vertices[face.x].pos;
+        glm::vec3 vB = model.vertices[face.y].pos;
+        glm::vec3 vC = model.vertices[face.z].pos;
+        glm::vec3 normal = glm::cross(vB - vA, vC - vA);
+        float area = glm::length(glm::cross(vB - vA, vC - vA)) / 2;
+        model.vertices[face.x].normal += normal * area;
+        model.vertices[face.y].normal += normal * area;
+        model.vertices[face.z].normal += normal * area;
+      }
+      for (Vertex &vertex : model.vertices) {
+        vertex.normal = glm::normalize(vertex.normal);
+      }
     }
-    for (glm::vec3 &face : model.faces) {
-      glm::vec3 vA = model.vertices[face.x].pos;
-      glm::vec3 vB = model.vertices[face.y].pos;
-      glm::vec3 vC = model.vertices[face.z].pos;
-      glm::vec3 normal = glm::cross(vB - vA, vC - vA);
-      float area = glm::length(glm::cross(vB - vA, vC - vA)) / 2;
-      model.vertices[face.x].normal += normal * area;
-      model.vertices[face.y].normal += normal * area;
-      model.vertices[face.z].normal += normal * area;
-    }
-    for (Vertex &vertex : model.vertices) {
-      vertex.normal = glm::normalize(vertex.normal);
-    }
-    //	}
 
     model.bbox_min = bbox_min;
     model.bbox_max = bbox_max;

@@ -125,8 +125,8 @@ struct Camera {
   std::string uri = "";
   yocto::frame3f frame = yocto::identity3x4f;
   bool orthographic = false;
-  float lens = 0.050;
-  yocto::vec2f film = {0.036, 0.024};
+  float lens = 0;
+  yocto::vec2f film = {0.036, 0.015};
   float focus = yocto::flt_max;
   float aperture = 0;
 };
@@ -444,8 +444,9 @@ private:
         auto dolly = 0.0f;
         auto pan = yocto::zero2f;
         auto rotate = yocto::zero2f;
-        if (mouse_left && !shift_down)
+        if (mouse_left && !shift_down) {
           rotate = (mouse_pos - last_pos) / 100.0f;
+        }
         if (mouse_right)
           dolly = (mouse_pos.x - last_pos.x) / 100.0f;
         if (mouse_left && shift_down)
@@ -1434,12 +1435,22 @@ private:
   void updateUniformBuffer(uint32_t currentImage) {
 
     UniformBufferObject ubo = {};
-    ubo.model = glm::mat4(1);
+    ubo.model = glm::mat4(1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1);
     ubo.view = glm::inverse(frame_to_mat(camera.frame));
     glm::vec4 viewport = get_glframebuffer_viewport(window);
     ubo.proj = perspective_mat(
         camera_fov(camera).x * (float)viewport.w / (float)viewport.z,
         (float)viewport.z / (float)viewport.w, 0.01f, 10000.0f);
+    /*
+    GLM was originally designed for OpenGL, where the Y coordinate of the clip
+    coordinates is
+    inverted. The easiest way to compensate for that is to flip the sign on the
+    scaling factor
+    of the Y axis in the projection matrix. If you don't do this, then the image
+    will be rendered
+    upside down
+    */
+    ubo.proj[1][1] *= -1;
 
     ubo.light_color = light.color;
     ubo.light_position = light.position;
