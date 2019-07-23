@@ -418,6 +418,7 @@ private:
     double lastTime = glfwGetTime();
     int nbFrames = 0;
     while (!glfwWindowShouldClose(window)) {
+      // FPS COUNTER
       double currentTime = glfwGetTime();
       double delta = currentTime - lastTime;
       nbFrames++;
@@ -433,13 +434,14 @@ private:
         nbFrames = 0;
         lastTime = currentTime;
       }
+      // MOUSE EVENTS
       last_pos = mouse_pos;
       mouse_pos = get_mouse_position(window);
       int mouse_left = is_mouse_left(window);
       int mouse_right = is_mouse_right(window);
       auto alt_down = is_alt_key(window);
       auto shift_down = is_shift_key(window);
-
+      // CAMERA CONTROLS
       if ((mouse_left || mouse_right) && !alt_down) {
         auto dolly = 0.0f;
         auto pan = yocto::zero2f;
@@ -454,8 +456,18 @@ private:
         update_turntable(camera.frame, camera.focus, rotate, dolly, pan);
       }
 
-      updateLight(light);
       glfwPollEvents();
+      // DRAW CURSOR
+      yocto::vec2f dmouse = mouse_pos - last_pos;
+      int nsteps = (int)std::round(yocto::length(dmouse) / 1);
+      for (int step = 0; step < nsteps; step++) {
+        yocto::vec2f cur_pos =
+            last_pos + (float)step * (dmouse / (float)nsteps);
+        drawCursor();
+      }
+
+      // DRAW SCENE
+      updateLight(light);
       drawFrame();
     }
     // wait for the logical device to finish operations before exiting and
@@ -1290,6 +1302,8 @@ private:
     }
   }
 
+  void drawCursor() {}
+
   /*
   - Acquire an image from the swap chain
   - Execute the command buffer with that image as attachment in the framebuffer
@@ -1702,6 +1716,104 @@ private:
     if (vkCreateRenderPass(device, &renderPassInfo, nullptr, &renderPass) !=
         VK_SUCCESS) {
       throw std::runtime_error("failed to create render pass!");
+    }
+  }
+
+  VkPipelineShaderStageCreateInfo createVertShaderStageInfo(char *shadername) {
+    auto vertShaderCode = readFile(shadername);
+    VkShaderModule vertShaderModule = createShaderModule(vertShaderCode);
+    // To actually use the shaders we'll need to assign them to a specific
+    // pipeline stage
+    VkPipelineShaderStageCreateInfo vertShaderStageInfo = {};
+    vertShaderStageInfo.sType =
+        VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    // tell Vulkan in which pipeline stage the shader is going to be used.
+    vertShaderStageInfo.stage = VK_SHADER_STAGE_VERTEX_BIT;
+    // the shader module containing the code
+    vertShaderStageInfo.module = vertShaderModule;
+    // the function to invoke, known as the entrypoint
+    vertShaderStageInfo.pName = "main";
+
+    return vertShaderStageInfo;
+  };
+
+  VkPipelineShaderStageCreateInfo createFragShaderStageInfo(char *shadername) {
+    auto fragShaderCode = readFile("shaders/frag.spv");
+    VkShaderModule fragShaderModule = createShaderModule(fragShaderCode);
+
+    VkPipelineShaderStageCreateInfo fragShaderStageInfo = {};
+    fragShaderStageInfo.sType =
+        VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    fragShaderStageInfo.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+    fragShaderStageInfo.module = fragShaderModule;
+    fragShaderStageInfo.pName = "main";
+
+    return fragShaderStageInfo;
+  };
+
+  VkPipelineVertexInputStateCreateInfo *createVertexInputInfo() {
+
+    // set up the graphics pipeline to accept vertex data
+    auto bindingDescription = Vertex::getBindingDescription();
+    auto attributeDescriptions = Vertex::getAttributeDescriptions();
+
+    // structure to the format of the vertex data that will be passed to the
+    // vertex shader
+    VkPipelineVertexInputStateCreateInfo vertexInputInfo = {};
+    vertexInputInfo.sType =
+        VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+    vertexInputInfo.vertexBindingDescriptionCount = 1;
+    vertexInputInfo.pVertexBindingDescriptions =
+        &bindingDescription; // Optional
+    vertexInputInfo.vertexAttributeDescriptionCount =
+        static_cast<uint32_t>(attributeDescriptions.size());
+    ;
+    vertexInputInfo.pVertexAttributeDescriptions =
+        attributeDescriptions.data(); // Optional
+
+    return &vertexInputInfo;
+  };
+
+  VkPipelineInputAssemblyStateCreateInfo *createInputAssembly() {
+    // what kind of geometry will be drawn from the vertices and if primitive
+    // restart should be enabled
+    VkPipelineInputAssemblyStateCreateInfo inputAssembly = {};
+    inputAssembly.sType =
+        VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+    inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    inputAssembly.primitiveRestartEnable = VK_FALSE;
+
+    return &inputAssembly;
+  };
+
+  void createMouseGraphicsPipeline() {
+
+    VkPipelineShaderStageCreateInfo shaderStages[] = {
+        createVertShaderStageInfo("shaders/vert.spv"),
+        createFragShaderStageInfo("shaders/frag.spv")};
+
+    VkGraphicsPipelineCreateInfo pipelineInfo = {};
+    pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+    pipelineInfo.stageCount = 2;
+    pipelineInfo.pStages = shaderStages;
+    pipelineInfo.pVertexInputState = createVertexInputInfo();
+    pipelineInfo.pInputAssemblyState = createInputAssembly();
+    pipelineInfo.pViewportState = createViewportState();
+    pipelineInfo.pRasterizationState = createRasterizer();
+    pipelineInfo.pMultisampleState = createMultisampling();
+    pipelineInfo.pDepthStencilState = createDepthStencil();
+    pipelineInfo.pColorBlendState = createColorBlending();
+    pipelineInfo.pDynamicState = nullptr; // Optional
+
+    pipelineInfo.layout = pipelineLayout;
+    pipelineInfo.renderPass = renderPass;
+    pipelineInfo.subpass = 0;
+    pipelineInfo.basePipelineHandle = VK_NULL_HANDLE; // Optional
+    pipelineInfo.basePipelineIndex = -1;              // Optional
+
+    if (vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo,
+                                  nullptr, &graphicsPipeline) != VK_SUCCESS) {
+      throw std::runtime_error("failed to create graphics pipeline!");
     }
   }
 
