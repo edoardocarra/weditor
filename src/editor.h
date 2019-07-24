@@ -94,6 +94,11 @@ struct Vertex {
   }
 };
 
+struct Ray {
+  glm::vec3 origin;
+  glm::vec3 direction;
+};
+
 struct Texture {
   int texWidth;
   int texHeight;
@@ -146,6 +151,9 @@ struct UniformBufferObject {
   alignas(16) glm::vec3 light_position;
   alignas(16) glm::vec3 light_color;
   alignas(4) float light_intensity;
+  alignas(16) glm::vec3 V1;
+  alignas(16) glm::vec3 V2;
+  alignas(16) glm::vec3 V3;
 };
 
 /* The stages that the current frame has already progressed through are idle
@@ -245,6 +253,7 @@ public:
   Model model;
   Camera camera;
   Light light;
+  glm::vec3 cursor;
   void run() {
     initWindow();
     initVulkan();
@@ -458,12 +467,12 @@ private:
 
       glfwPollEvents();
       // DRAW CURSOR
-      yocto::vec2f dmouse = mouse_pos - last_pos;
-      int nsteps = (int)std::round(yocto::length(dmouse) / 1);
-      for (int step = 0; step < nsteps; step++) {
-        yocto::vec2f cur_pos =
-            last_pos + (float)step * (dmouse / (float)nsteps);
-        drawCursor();
+      Ray ray = createRay(mouse_pos);
+      for (glm::vec3 face : model.faces) {
+        if (RayIntersectsTriangle(ray, face)) {
+          cursor = face;
+          break;
+        }
       }
 
       // DRAW SCENE
@@ -513,6 +522,65 @@ private:
 
     glfwTerminate();
   }
+
+  bool RayIntersectsTriangle(const Ray ray, glm::vec3 face) {
+
+    const float EPSILON = 0.0000001;
+    glm::vec3 vertex0 = model.vertices[face.x].pos;
+    glm::vec3 vertex1 = model.vertices[face.y].pos;
+    glm::vec3 vertex2 = model.vertices[face.z].pos;
+
+    glm::vec3 edge1, edge2, h, s, q;
+    float a, f, u, v;
+    edge1 = vertex1 - vertex0;
+    edge2 = vertex2 - vertex0;
+    h = glm::cross(ray.direction, edge2);
+    a = glm::dot(edge1, h);
+    if (a > -EPSILON && a < EPSILON)
+      return false; // This ray is parallel to this triangle.
+    f = 1.0 / a;
+    s = ray.origin - vertex0;
+    u = f * glm::dot(s, h);
+    if (u < 0.0 || u > 1.0)
+      return false;
+    q = glm::cross(s, edge1);
+    v = f * glm::dot(ray.direction, q);
+    if (v < 0.0 || u + v > 1.0)
+      return false;
+    float t = f * glm::dot(edge2, q);
+    if (t > EPSILON) // ray intersection
+    {
+      return true;
+    } else // This means that there is a line intersection but not a ray
+           // intersection.
+      return false;
+  }
+
+  Ray createRay(yocto::vec2f mousePos) {
+
+    Ray ray;
+
+    glm::vec4 viewport = get_glframebuffer_viewport(window);
+    glm::mat4 view = glm::inverse(frame_to_mat(camera.frame));
+    glm::mat4 proj = perspective_mat(
+        camera_fov(camera).x * (float)viewport.w / (float)viewport.z,
+        (float)viewport.z / (float)viewport.w, 0.01f, 10000.0f);
+    proj[1][1] *= -1;
+
+    glm::vec2 ray_nds = glm::vec2((2.0f * mousePos.x) / WIDTH - 1.0f, 1.0f - (2.0f * mousePos.y) / HEIGHT);
+    glm::vec4 ray_clip = glm::vec4(ray_nds.x, ray_nds.y, -1.0f, 1.0f);
+    glm::mat4 invProjMat = glm::inverse(proj);
+    glm::vec4 eyeCoords = invProjMat * ray_clip;
+    eyeCoords = glm::vec4(eyeCoords.x, eyeCoords.y, -1.0f, 0.0f);
+    glm::mat4 invViewMat = glm::inverse(view);
+    glm::vec4 rayWorld = invViewMat * eyeCoords;
+    glm::vec3 rayDirection = glm::normalize(glm::vec3(rayWorld));
+
+    ray.direction = rayDirection;
+    ray.origin = glm::vec3(camera.frame.o.x,camera.frame.o.y,camera.frame.o.z);
+
+    return ray;
+  };
 
   /*
   Textures are usually accessed through samplers, which will apply filtering
@@ -933,8 +1001,8 @@ private:
                           light.position.y * light.position.y +
                           light.position.z * light.position.z);
 
-    light.position.x = distance * cos(time / 100.0f * 90.0f);
-    light.position.y = distance * sin(time / 100.0f * 90.0f);
+    /*     light.position.x = distance * cos(time / 100.0f * 90.0f);
+        light.position.y = distance * sin(time / 100.0f * 90.0f); */
   }
 
   // MOUSE MOVEMENT
@@ -1465,6 +1533,9 @@ private:
     upside down
     */
     ubo.proj[1][1] *= -1;
+    ubo.V1 = model.vertices[cursor.x].pos;
+    ubo.V2 = model.vertices[cursor.y].pos;
+    ubo.V3 = model.vertices[cursor.z].pos;
 
     ubo.light_color = light.color;
     ubo.light_position = light.position;
@@ -1719,104 +1790,6 @@ private:
     }
   }
 
-  VkPipelineShaderStageCreateInfo createVertShaderStageInfo(char *shadername) {
-    auto vertShaderCode = readFile(shadername);
-    VkShaderModule vertShaderModule = createShaderModule(vertShaderCode);
-    // To actually use the shaders we'll need to assign them to a specific
-    // pipeline stage
-    VkPipelineShaderStageCreateInfo vertShaderStageInfo = {};
-    vertShaderStageInfo.sType =
-        VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    // tell Vulkan in which pipeline stage the shader is going to be used.
-    vertShaderStageInfo.stage = VK_SHADER_STAGE_VERTEX_BIT;
-    // the shader module containing the code
-    vertShaderStageInfo.module = vertShaderModule;
-    // the function to invoke, known as the entrypoint
-    vertShaderStageInfo.pName = "main";
-
-    return vertShaderStageInfo;
-  };
-
-  VkPipelineShaderStageCreateInfo createFragShaderStageInfo(char *shadername) {
-    auto fragShaderCode = readFile("shaders/frag.spv");
-    VkShaderModule fragShaderModule = createShaderModule(fragShaderCode);
-
-    VkPipelineShaderStageCreateInfo fragShaderStageInfo = {};
-    fragShaderStageInfo.sType =
-        VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    fragShaderStageInfo.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
-    fragShaderStageInfo.module = fragShaderModule;
-    fragShaderStageInfo.pName = "main";
-
-    return fragShaderStageInfo;
-  };
-
-  VkPipelineVertexInputStateCreateInfo *createVertexInputInfo() {
-
-    // set up the graphics pipeline to accept vertex data
-    auto bindingDescription = Vertex::getBindingDescription();
-    auto attributeDescriptions = Vertex::getAttributeDescriptions();
-
-    // structure to the format of the vertex data that will be passed to the
-    // vertex shader
-    VkPipelineVertexInputStateCreateInfo vertexInputInfo = {};
-    vertexInputInfo.sType =
-        VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-    vertexInputInfo.vertexBindingDescriptionCount = 1;
-    vertexInputInfo.pVertexBindingDescriptions =
-        &bindingDescription; // Optional
-    vertexInputInfo.vertexAttributeDescriptionCount =
-        static_cast<uint32_t>(attributeDescriptions.size());
-    ;
-    vertexInputInfo.pVertexAttributeDescriptions =
-        attributeDescriptions.data(); // Optional
-
-    return &vertexInputInfo;
-  };
-
-  VkPipelineInputAssemblyStateCreateInfo *createInputAssembly() {
-    // what kind of geometry will be drawn from the vertices and if primitive
-    // restart should be enabled
-    VkPipelineInputAssemblyStateCreateInfo inputAssembly = {};
-    inputAssembly.sType =
-        VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
-    inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-    inputAssembly.primitiveRestartEnable = VK_FALSE;
-
-    return &inputAssembly;
-  };
-
-  void createMouseGraphicsPipeline() {
-
-    VkPipelineShaderStageCreateInfo shaderStages[] = {
-        createVertShaderStageInfo("shaders/vert.spv"),
-        createFragShaderStageInfo("shaders/frag.spv")};
-
-    VkGraphicsPipelineCreateInfo pipelineInfo = {};
-    pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
-    pipelineInfo.stageCount = 2;
-    pipelineInfo.pStages = shaderStages;
-    pipelineInfo.pVertexInputState = createVertexInputInfo();
-    pipelineInfo.pInputAssemblyState = createInputAssembly();
-    pipelineInfo.pViewportState = createViewportState();
-    pipelineInfo.pRasterizationState = createRasterizer();
-    pipelineInfo.pMultisampleState = createMultisampling();
-    pipelineInfo.pDepthStencilState = createDepthStencil();
-    pipelineInfo.pColorBlendState = createColorBlending();
-    pipelineInfo.pDynamicState = nullptr; // Optional
-
-    pipelineInfo.layout = pipelineLayout;
-    pipelineInfo.renderPass = renderPass;
-    pipelineInfo.subpass = 0;
-    pipelineInfo.basePipelineHandle = VK_NULL_HANDLE; // Optional
-    pipelineInfo.basePipelineIndex = -1;              // Optional
-
-    if (vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo,
-                                  nullptr, &graphicsPipeline) != VK_SUCCESS) {
-      throw std::runtime_error("failed to create graphics pipeline!");
-    }
-  }
-
   void createGraphicsPipeline() {
     auto vertShaderCode = readFile("shaders/vert.spv");
     auto fragShaderCode = readFile("shaders/frag.spv");
@@ -2022,7 +1995,6 @@ private:
                     VK_DYNAMIC_STATE_VIEWPORT,
                     VK_DYNAMIC_STATE_LINE_WIDTH
                 };
-
                 VkPipelineDynamicStateCreateInfo dynamicState = {};
                 dynamicState.sType =
        VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
@@ -2083,6 +2055,7 @@ private:
     vkDestroyShaderModule(device, fragShaderModule, nullptr);
     vkDestroyShaderModule(device, vertShaderModule, nullptr);
   }
+
   // we have to wrap the shader code in a VkShaderModule
   VkShaderModule createShaderModule(const std::vector<char> &code) {
     VkShaderModuleCreateInfo createInfo = {};

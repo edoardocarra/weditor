@@ -13,6 +13,9 @@ layout(binding = 0) uniform UniformBufferObject {
   vec3 light_position;
   vec3 light_color;
   float light_intensity;
+  vec3 V1;
+  vec3 V2;
+  vec3 V3;
 }
 ubo;
 
@@ -34,7 +37,13 @@ layout(location = 9) out float light_intensity;
 
 void main() {
   gl_Position = ubo.proj * ubo.view * ubo.model * vec4(inPosition, 1.0);
-  fragColor = inColor;
+
+  vec4 V1_Position = ubo.proj * ubo.view * ubo.model * vec4(ubo.V1, 1.0);
+  vec4 V2_Position = ubo.proj * ubo.view * ubo.model * vec4(ubo.V2, 1.0);
+  vec4 V3_Position = ubo.proj * ubo.view * ubo.model * vec4(ubo.V3, 1.0);
+
+  fragColor = (V1_Position == gl_Position || V2_Position == gl_Position || V3_Position == gl_Position) ? vec3(1,0,0) : inColor;
+  //fragColor = vec3(sqrt((inPosition.x - ubo.V1.x)*(inPosition.x - ubo.V1.x) + (inPosition.y - ubo.V1.y)*(inPosition.y - ubo.V1.y) + (inPosition.z - ubo.V1.z)*(inPosition.z - ubo.V1.z)),0,0);
   fragTexCoord = inTexCoord;
   eyePos = vec3(ubo.view[0].w, ubo.view[1].w, ubo.view[2].w);
   resolution = vec2(ubo.resolution.x, ubo.resolution.y);
