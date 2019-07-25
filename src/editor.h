@@ -47,6 +47,7 @@ struct Vertex {
   glm::vec3 normal;
   glm::vec3 color;
   glm::vec2 texCoord;
+  int touched = 0;
 
   // A vertex binding describes at which rate to load data from memory
   // throughout the vertices
@@ -61,9 +62,9 @@ struct Vertex {
 
   // An attribute description struct describes how to extract a vertex attribute
   // from a chunk of vertex data originating from a binding description
-  static std::array<VkVertexInputAttributeDescription, 4>
+  static std::array<VkVertexInputAttributeDescription, 5>
   getAttributeDescriptions() {
-    std::array<VkVertexInputAttributeDescription, 4> attributeDescriptions = {};
+    std::array<VkVertexInputAttributeDescription, 5> attributeDescriptions = {};
     // position attribute
     attributeDescriptions[0].binding = 0;
     attributeDescriptions[0].location = 0;
@@ -84,7 +85,11 @@ struct Vertex {
     attributeDescriptions[3].location = 3;
     attributeDescriptions[3].format = VK_FORMAT_R32G32_SFLOAT;
     attributeDescriptions[3].offset = offsetof(Vertex, texCoord);
-
+    // touched attribute
+    attributeDescriptions[4].binding = 0;
+    attributeDescriptions[4].location = 4;
+    attributeDescriptions[4].format = VK_FORMAT_R8G8B8A8_SINT;
+    attributeDescriptions[4].offset = offsetof(Vertex, touched);
     return attributeDescriptions;
   }
 
@@ -128,11 +133,11 @@ template <> struct hash<Vertex> {
 
 struct Camera {
   std::string uri = "";
-  yocto::frame3f frame = yocto::identity3x4f;
+  ym::frame3f frame = ym::identity_frame3f;
   bool orthographic = false;
   float lens = 0;
-  yocto::vec2f film = {0.036, 0.015};
-  float focus = yocto::flt_max;
+  ym::vec2f film = {0.036, 0.015};
+  float focus = ym::flt_max;
   float aperture = 0;
 };
 
@@ -144,16 +149,13 @@ struct Light {
 
 // descriptor
 struct UniformBufferObject {
-  alignas(16) glm::mat4 model;
-  alignas(16) glm::mat4 view;
-  alignas(16) glm::mat4 proj;
-  alignas(4) glm::vec2 resolution;
+  alignas(64) glm::mat4 model;
+  alignas(64) glm::mat4 view;
+  alignas(64) glm::mat4 proj;
+  alignas(8) glm::vec2 resolution;
   alignas(16) glm::vec3 light_position;
   alignas(16) glm::vec3 light_color;
   alignas(4) float light_intensity;
-  alignas(16) glm::vec3 V1;
-  alignas(16) glm::vec3 V2;
-  alignas(16) glm::vec3 V3;
 };
 
 /* The stages that the current frame has already progressed through are idle
@@ -423,7 +425,7 @@ private:
     createSyncObjects();
   }
   void mainLoop() {
-    auto mouse_pos = yocto::zero2f, last_pos = yocto::zero2f;
+    auto mouse_pos = ym::zero2f, last_pos = ym::zero2f;
     double lastTime = glfwGetTime();
     int nbFrames = 0;
     while (!glfwWindowShouldClose(window)) {
@@ -453,8 +455,8 @@ private:
       // CAMERA CONTROLS
       if ((mouse_left || mouse_right) && !alt_down) {
         auto dolly = 0.0f;
-        auto pan = yocto::zero2f;
-        auto rotate = yocto::zero2f;
+        auto pan = ym::zero2f;
+        auto rotate = ym::zero2f;
         if (mouse_left && !shift_down) {
           rotate = (mouse_pos - last_pos) / 100.0f;
         }
@@ -462,19 +464,19 @@ private:
           dolly = (mouse_pos.x - last_pos.x) / 100.0f;
         if (mouse_left && shift_down)
           pan = (mouse_pos - last_pos) / 100.0f;
-        update_turntable(camera.frame, camera.focus, rotate, dolly, pan);
+        ym::camera_turntable(camera.frame, camera.focus, rotate, dolly, pan);
       }
 
-      glfwPollEvents();
       // DRAW CURSOR
-      Ray ray = createRay(mouse_pos);
-      for (glm::vec3 face : model.faces) {
-        if (RayIntersectsTriangle(ray, face)) {
-          cursor = face;
-          break;
+      if(mouse_left) {
+        ym::ray3f ray = createRay(mouse_pos);
+        for (Vertex& v : model.vertices) {
+          if (ym::intersect_sphere(ym::vec3f(v.pos.x,v.pos.y,v.pos.z), 10, ray)) {
+            v.touched=1; //need to update vertex properties to be visible
+          }
         }
       }
-
+      glfwPollEvents();
       // DRAW SCENE
       updateLight(light);
       drawFrame();
@@ -556,9 +558,9 @@ private:
       return false;
   }
 
-  Ray createRay(yocto::vec2f mousePos) {
+  ym::ray3f createRay(ym::vec2f mousePos) {
 
-    Ray ray;
+    ym::ray3f ray;
 
     glm::vec4 viewport = get_glframebuffer_viewport(window);
     glm::mat4 view = glm::inverse(frame_to_mat(camera.frame));
@@ -567,7 +569,8 @@ private:
         (float)viewport.z / (float)viewport.w, 0.01f, 10000.0f);
     proj[1][1] *= -1;
 
-    glm::vec2 ray_nds = glm::vec2((2.0f * mousePos.x) / WIDTH - 1.0f, 1.0f - (2.0f * mousePos.y) / HEIGHT);
+    glm::vec2 ray_nds = glm::vec2(mousePos.x / (WIDTH * 0.5f) - 1.0f,
+                                  mousePos.y / (HEIGHT * 0.5f) - 1.0f);
     glm::vec4 ray_clip = glm::vec4(ray_nds.x, ray_nds.y, -1.0f, 1.0f);
     glm::mat4 invProjMat = glm::inverse(proj);
     glm::vec4 eyeCoords = invProjMat * ray_clip;
@@ -576,8 +579,8 @@ private:
     glm::vec4 rayWorld = invViewMat * eyeCoords;
     glm::vec3 rayDirection = glm::normalize(glm::vec3(rayWorld));
 
-    ray.direction = rayDirection;
-    ray.origin = glm::vec3(camera.frame.o.x,camera.frame.o.y,camera.frame.o.z);
+    ray.d = ym::vec3f(rayDirection.x, rayDirection.y, rayDirection.z);
+    ray.o = ym::vec3f(camera.frame.o.x, camera.frame.o.y, camera.frame.o.z);
 
     return ray;
   };
@@ -1026,10 +1029,10 @@ private:
            glfwGetKey(window, GLFW_KEY_RIGHT_SHIFT) == GLFW_PRESS;
   }
 
-  yocto::vec2f get_mouse_position(GLFWwindow *window) {
+  ym::vec2f get_mouse_position(GLFWwindow *window) {
     double mouse_posx, mouse_posy;
     glfwGetCursorPos(window, &mouse_posx, &mouse_posy);
-    auto pos = yocto::vec2f{(float)mouse_posx, (float)mouse_posy};
+    auto pos = ym::vec2f{(float)mouse_posx, (float)mouse_posy};
     return pos;
   }
 
@@ -1483,13 +1486,13 @@ private:
     currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
   }
 
-  yocto::vec2f camera_fov(const Camera &camera) {
+  ym::vec2f camera_fov(const Camera &camera) {
     assert(!camera.orthographic);
     return {2 * atan(camera.film.x / (2 * camera.lens)),
             2 * atan(camera.film.y / (2 * camera.lens))};
   }
 
-  glm::mat4 frame_to_mat(yocto::frame3f frame) {
+  glm::mat4 frame_to_mat(ym::frame3f frame) {
     return glm::mat4(frame.x.x, frame.x.y, frame.x.z, 0, frame.y.x, frame.y.y,
                      frame.y.z, 0, frame.z.x, frame.z.y, frame.z.z, 0,
                      frame.o.x, frame.o.y, frame.o.z, 1);
@@ -1497,7 +1500,7 @@ private:
 
   glm::vec4 get_glframebuffer_viewport(GLFWwindow *win) {
 
-    auto yviewport = yocto::zero4i;
+    auto yviewport = ym::zero4i;
     glfwGetFramebufferSize(win, &yviewport.z, &yviewport.w);
     glm::vec4 viewport(0, 0, yviewport.z, yviewport.w);
     return viewport;
@@ -1533,9 +1536,6 @@ private:
     upside down
     */
     ubo.proj[1][1] *= -1;
-    ubo.V1 = model.vertices[cursor.x].pos;
-    ubo.V2 = model.vertices[cursor.y].pos;
-    ubo.V3 = model.vertices[cursor.z].pos;
 
     ubo.light_color = light.color;
     ubo.light_position = light.position;
