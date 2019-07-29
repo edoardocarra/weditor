@@ -38,7 +38,8 @@ check if the new fragment is closer than the previous one
 #include <unordered_map>
 #include <sstream>
 #include <math.h>
-#include <yocto_math.h>
+#include "YOCTO/yocto_math.h"
+#include "YOCTO/yocto_bvh.h"
 
 inline const double pi = 3.14159265358979323846;
 
@@ -133,11 +134,11 @@ template <> struct hash<Vertex> {
 
 struct Camera {
   std::string uri = "";
-  ym::frame3f frame = ym::identity_frame3f;
+  yocto::frame3f frame = yocto::identity3x4f;
   bool orthographic = false;
   float lens = 0;
-  ym::vec2f film = {0.036, 0.015};
-  float focus = ym::flt_max;
+  yocto::vec2f film = {0.036, 0.015};
+  float focus = yocto::flt_max;
   float aperture = 0;
 };
 
@@ -425,7 +426,7 @@ private:
     createSyncObjects();
   }
   void mainLoop() {
-    auto mouse_pos = ym::zero2f, last_pos = ym::zero2f;
+    auto mouse_pos = yocto::zero2f, last_pos = yocto::zero2f;
     double lastTime = glfwGetTime();
     int nbFrames = 0;
     while (!glfwWindowShouldClose(window)) {
@@ -455,8 +456,8 @@ private:
       // CAMERA CONTROLS
       if ((mouse_left || mouse_right) && !alt_down) {
         auto dolly = 0.0f;
-        auto pan = ym::zero2f;
-        auto rotate = ym::zero2f;
+        auto pan = yocto::zero2f;
+        auto rotate = yocto::zero2f;
         if (mouse_left && !shift_down) {
           rotate = (mouse_pos - last_pos) / 100.0f;
         }
@@ -464,18 +465,24 @@ private:
           dolly = (mouse_pos.x - last_pos.x) / 100.0f;
         if (mouse_left && shift_down)
           pan = (mouse_pos - last_pos) / 100.0f;
-        ym::camera_turntable(camera.frame, camera.focus, rotate, dolly, pan);
+        yocto::update_turntable(camera.frame, camera.focus, rotate, dolly, pan);
       }
 
       // DRAW CURSOR
-      if(mouse_left) {
-        ym::ray3f ray = createRay(mouse_pos);
-        for (Vertex& v : model.vertices) {
-          if (ym::intersect_sphere(ym::vec3f(v.pos.x,v.pos.y,v.pos.z), 10, ray)) {
-            v.touched=1; //need to update vertex properties to be visible
-          }
-        }
+      yocto::ray3f ray = createRay(mouse_pos);
+      for (Vertex &v : model.vertices) {
+        int element;
+        yocto::vec2f uv;
+        float distance;
+        v.touched = 0;
+        //if(yocto::intersect_bvh(model.bvh, ray, element, uv, distance)) {}
+  
+/*         if (yocto::intersect_sphere(yocto::vec3f(v.pos.x, v.pos.y, v.pos.z), 0.01f,
+                                 ray)) {
+          v.touched = 1; // need to update vertex properties to be visible
+        } */
       }
+      recreateSwapChainVertex();
       glfwPollEvents();
       // DRAW SCENE
       updateLight(light);
@@ -558,9 +565,9 @@ private:
       return false;
   }
 
-  ym::ray3f createRay(ym::vec2f mousePos) {
+  yocto::ray3f createRay(yocto::vec2f mousePos) {
 
-    ym::ray3f ray;
+    yocto::ray3f ray;
 
     glm::vec4 viewport = get_glframebuffer_viewport(window);
     glm::mat4 view = glm::inverse(frame_to_mat(camera.frame));
@@ -579,8 +586,8 @@ private:
     glm::vec4 rayWorld = invViewMat * eyeCoords;
     glm::vec3 rayDirection = glm::normalize(glm::vec3(rayWorld));
 
-    ray.d = ym::vec3f(rayDirection.x, rayDirection.y, rayDirection.z);
-    ray.o = ym::vec3f(camera.frame.o.x, camera.frame.o.y, camera.frame.o.z);
+    ray.d = yocto::vec3f(rayDirection.x, rayDirection.y, rayDirection.z);
+    ray.o = yocto::vec3f(camera.frame.o.x, camera.frame.o.y, camera.frame.o.z);
 
     return ray;
   };
@@ -1029,10 +1036,10 @@ private:
            glfwGetKey(window, GLFW_KEY_RIGHT_SHIFT) == GLFW_PRESS;
   }
 
-  ym::vec2f get_mouse_position(GLFWwindow *window) {
+  yocto::vec2f get_mouse_position(GLFWwindow *window) {
     double mouse_posx, mouse_posy;
     glfwGetCursorPos(window, &mouse_posx, &mouse_posy);
-    auto pos = ym::vec2f{(float)mouse_posx, (float)mouse_posy};
+    auto pos = yocto::vec2f{(float)mouse_posx, (float)mouse_posy};
     return pos;
   }
 
@@ -1486,13 +1493,13 @@ private:
     currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
   }
 
-  ym::vec2f camera_fov(const Camera &camera) {
+  yocto::vec2f camera_fov(const Camera &camera) {
     assert(!camera.orthographic);
     return {2 * atan(camera.film.x / (2 * camera.lens)),
             2 * atan(camera.film.y / (2 * camera.lens))};
   }
 
-  glm::mat4 frame_to_mat(ym::frame3f frame) {
+  glm::mat4 frame_to_mat(yocto::frame3f frame) {
     return glm::mat4(frame.x.x, frame.x.y, frame.x.z, 0, frame.y.x, frame.y.y,
                      frame.y.z, 0, frame.z.x, frame.z.y, frame.z.z, 0,
                      frame.o.x, frame.o.y, frame.o.z, 1);
@@ -1500,7 +1507,7 @@ private:
 
   glm::vec4 get_glframebuffer_viewport(GLFWwindow *win) {
 
-    auto yviewport = ym::zero4i;
+    auto yviewport = yocto::zero4i;
     glfwGetFramebufferSize(win, &yviewport.z, &yviewport.w);
     glm::vec4 viewport(0, 0, yviewport.z, yviewport.w);
     return viewport;
@@ -1630,6 +1637,39 @@ private:
         throw std::runtime_error("failed to record command buffer!");
       }
     }
+  }
+
+  void recreateSwapChainVertex() {
+    // special kind of window resizing: when framebuffer size is 0
+    int width = 0, height = 0;
+    while (width == 0 || height == 0) {
+      glfwGetFramebufferSize(window, &width, &height);
+      glfwWaitEvents();
+    }
+
+    vkDeviceWaitIdle(
+        device); // we shouldn't touch resources that may still be in use
+
+    // make sure that the old versions of these objects are cleaned up before
+    // recreating them
+    cleanupSwapChain();
+    vkDestroyBuffer(device, indexBuffer, nullptr);
+    vkFreeMemory(device, indexBufferMemory, nullptr);
+    vkDestroyBuffer(device, vertexBuffer, nullptr);
+    vkFreeMemory(device, vertexBufferMemory, nullptr);
+
+    createSwapChain();
+    createImageViews();
+    createRenderPass();
+    createGraphicsPipeline();
+    createDepthResources();
+    createFramebuffers();
+    createVertexBuffer();
+    createIndexBuffer();
+    createUniformBuffers();
+    createDescriptorPool();
+    createDescriptorSets();
+    createCommandBuffers();
   }
 
   void createCommandPool() {
@@ -2133,13 +2173,14 @@ private:
     // make sure that the old versions of these objects are cleaned up before
     // recreating them
     cleanupSwapChain();
-
     createSwapChain();
     createImageViews();
     createRenderPass();
     createGraphicsPipeline();
     createDepthResources();
     createFramebuffers();
+    createVertexBuffer();
+    createIndexBuffer();
     createUniformBuffers();
     createDescriptorPool();
     createDescriptorSets();

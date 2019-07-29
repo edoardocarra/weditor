@@ -13,16 +13,16 @@ void setupLight(Light &camera) {
 }
 
 void setupCamera(Camera &camera, const Model &model) {
-  auto from = ym::vec3f{0, 2, 3};
-  auto to = ym::vec3f{(model.bbox_max.x + model.bbox_min.x) / 2,
+  auto from = yocto::vec3f{0, 2, 3};
+  auto to = yocto::vec3f{(model.bbox_max.x + model.bbox_min.x) / 2,
                       (model.bbox_max.y + model.bbox_min.y) / 2,
                       (model.bbox_max.z + model.bbox_min.z) / 2};
-  auto up = ym::vec3f{0, 1, 0};
+  auto up = yocto::vec3f{0, 1, 0};
   camera.orthographic = false;
   camera.film.x = 0.036f;
   camera.film.y = 0.024f;
   camera.lens = 0.050;
-  camera.frame = ym::lookat_frame3(from, to, up);
+  camera.frame = yocto::lookat_frame(from, to, up);
   camera.focus = length(from - to);
   camera.aperture = 0.01f;
 }
